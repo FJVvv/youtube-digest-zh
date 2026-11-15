@@ -16,8 +16,18 @@ test("manifest uses minimized install-time permissions", () => {
   assert.equal(manifest.options_ui.page, "options.html");
   assert.ok(!manifest.permissions.includes("activeTab"));
   assert.ok(manifest.host_permissions.includes("https://api.deepseek.com/*"));
-  assert.equal(Object.hasOwn(manifest, "optional_host_permissions"), false);
-  assert.equal(manifest.version, "1.2.0");
+  assert.deepEqual(manifest.optional_host_permissions, [
+    "http://*/*",
+    "https://*/*",
+  ]);
+  assert.equal(manifest.version, "1.3.0");
+  assert.deepEqual(
+    manifest.content_scripts.map((entry) => entry.js),
+    [["caption-capture.js"], ["content.js"]],
+  );
+  assert.equal(manifest.content_scripts[0].run_at, "document_start");
+  assert.equal(manifest.content_scripts[0].world, "MAIN");
+  assert.equal(manifest.content_scripts[1].run_at, "document_idle");
 });
 
 test("release copy documents current scope without em dashes", () => {
@@ -90,7 +100,7 @@ test("release copy documents current scope without em dashes", () => {
   assert.match(readme, /generated transcript costs \*\*2 credits per video minute\*\*/i);
   assert.match(readme, /HTTP `206` still uses \*\*1 credit\*\*/i);
   assert.match(readme, /forces `mode=native`/i);
-  assert.match(readme, /roughly 100 transcript lookups per month/i);
+  assert.match(readme, /100 monthly credits are only spent on videos/i);
   assert.match(readme, /supadata\.ai\/pricing/i);
   assert.match(readme, /docs\.supadata\.ai\/get-transcript/i);
   assert.match(readme, /dash\.supadata\.ai\/auth\/sign-up/i);
@@ -128,7 +138,16 @@ test("release copy documents current scope without em dashes", () => {
   assert.match(optionsPage, /dash\.supadata\.ai\/auth\/sign-up/i);
   assert.match(optionsPage, /platform\.deepseek\.com\/api_keys/i);
   assert.doesNotMatch(optionsPage, /<select\b/i);
-  assert.doesNotMatch(optionsPage, /id="(?:provider|aiBaseUrl|aiModel)"/);
+  assert.doesNotMatch(optionsPage, /id="provider"/);
+  for (const id of [
+    "supadataApiKey",
+    "aiModel",
+    "aiBaseUrl",
+    "testAiConnectionBtn",
+  ]) {
+    assert.match(optionsPage, new RegExp(`id="${id}"`));
+  }
+  assert.match(optionsPage, /name="transcriptSource"/);
   const detailsTag = optionsPage.match(
     /<details\b[^>]*class="card customization-card"[^>]*>/,
   );
@@ -164,14 +183,17 @@ test("release copy documents current scope without em dashes", () => {
   assert.match(readme, /more translation languages/i);
   assert.match(readme, /customized summary templates/i);
   assert.match(readme, /vocabulary notebook/i);
+  assert.match(readme, /Ask follow-up questions about the video in a chat tab/i);
+  assert.match(readme, /both fields are editable/i);
   assert.match(
     readme,
-    /first open the exact YouTube Digest project folder that Chrome loaded through \*\*Load unpacked\*\* in your coding agent/,
+    /If you want another AI provider or model, open Settings and edit/i,
   );
   assert.match(
     chineseReadme,
-    /先在编程 Agent 中打开 Chrome 通过“加载已解压的扩展程序”使用的那个准确的 YouTube Digest 项目文件夹/,
+    /接口地址和模型名称都可以修改|AI 接口地址.*模型名称/,
   );
+  assert.match(chineseReadme, /对话/);
 
   const publishedDocs = [
     readme,
@@ -183,8 +205,15 @@ test("release copy documents current scope without em dashes", () => {
   assert.doesNotMatch(publishedDocs, /optional custom-origin/i);
   assert.doesNotMatch(publishedDocs, /chosen AI provider/i);
   assert.doesNotMatch(publishedDocs, /configure a different OpenAI-compatible/i);
-  assert.match(readme, /published version supports DeepSeek V4 Flash as its only AI provider/i);
-  assert.match(chineseReadme, /发布版本只支持 DeepSeek V4 Flash/);
+  assert.match(
+    readme,
+    /any OpenAI-compatible provider can be configured/i,
+  );
+  assert.match(
+    readme,
+    /DeepSeek-specific request fields are only sent to the official/i,
+  );
+  assert.match(chineseReadme, /DeepSeek 专用的请求字段只会发送给官方/);
 });
 
 test("product UI contains no emoji or emoji-like pictographs", () => {
@@ -320,6 +349,7 @@ test("retired Remix and reader files are absent", () => {
 test("published prompt files contain runtime sections", () => {
   const expectedSections = {
     "prompts/analysis.md": ["System prompt", "User prompt"],
+    "prompts/chat.md": ["System prompt", "User prompt"],
     "prompts/explain.md": ["System prompt", "User prompt"],
     "prompts/note-cleanup.md": ["System prompt", "User prompt"],
     "prompts/translation.md": [

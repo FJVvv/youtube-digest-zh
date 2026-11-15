@@ -30,6 +30,7 @@ let ytdDigestButton = null;
 let digestButtonObserver = null;
 let digestButtonReconcileTimer = null;
 let digestButtonResizeListenerAdded = false;
+let ytdFreeCaptionRequestSeq = 0;
 
 // ============================================================
 // INITIALIZATION
@@ -163,11 +164,107 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.action === "extractFreeCaptions") {
+    // Ask the MAIN-world caption-capture script for the current video's cues.
+    // YouTube's own timedtext URLs are reused, so no third-party API is called.
+    requestFreeCaptions(message.videoId)
+      .then((result) => sendResponse(result))
+      .catch((error) =>
+        sendResponse({
+          success: false,
+          error: "FREE_CAPTIONS_FAILED",
+          code: (error && error.code) || "FREE_CAPTIONS_FAILED",
+          message: String((error && error.message) || error),
+        }),
+      );
+    return true; // Async response
+  }
+
   // Unknown action - still send a response to prevent hanging
   debugLog("[YouTube Digest Content] Unknown action:", message.action);
   sendResponse({ success: false, error: "Unknown action" });
   return false;
 });
+
+// ============================================================
+// FREE CAPTION REQUESTS (MAIN-world bridge)
+// ============================================================
+
+/**
+ * Asks caption-capture.js (registered as a MAIN-world content script) for the
+ * cues of the current video.
+ *
+ * The two scripts cannot share variables — content scripts live in an isolated
+ * world — so they talk over window.postMessage. Every request carries a unique
+ * requestId, and only the reply matching it is accepted.
+ *
+ * @param {string} videoId
+ * @returns {Promise<{success: true, cues: Array, language: string, source: string}>}
+ */
+function requestFreeCaptions(videoId) {
+  return new Promise((resolve, reject) => {
+    const requestId = `ytd-${Date.now()}-${ytdFreeCaptionRequestSeq++}`;
+    let settled = false;
+    let timeoutTimer = null;
+
+    function cleanup() {
+      settled = true;
+      window.removeEventListener("message", handleCaptionMessage);
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
+    }
+
+    function handleCaptionMessage(event) {
+      if (event.source !== window) return;
+
+      const data = event.data;
+      if (!data || data.source !== "ytd-caption-main") return;
+      if (data.requestId !== requestId) return;
+
+      if (data.type === "result") {
+        if (settled) return;
+        cleanup();
+        resolve({
+          success: true,
+          cues: Array.isArray(data.cues) ? data.cues : [],
+          language: data.language || "",
+          source: data.provider || "youtube",
+        });
+        return;
+      }
+
+      if (data.type === "error") {
+        if (settled) return;
+        cleanup();
+        const error = new Error(
+          data.message || "读取 YouTube 字幕失败",
+        );
+        error.code = data.code || "FREE_CAPTIONS_FAILED";
+        reject(error);
+      }
+    }
+
+    // The MAIN-world side gives up after ~12s; this is the outer backstop.
+    timeoutTimer = setTimeout(() => {
+      if (settled) return;
+      cleanup();
+      reject(new Error("读取 YouTube 字幕超时"));
+    }, 15000);
+
+    window.addEventListener("message", handleCaptionMessage);
+    window.postMessage(
+      {
+        source: "ytd-caption-content",
+        type: "extract",
+        requestId,
+        videoId,
+      },
+      "*",
+    );
+  });
+}
 
 // ============================================================
 // DIGEST BUTTON INJECTION

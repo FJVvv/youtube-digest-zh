@@ -46,8 +46,33 @@
       <form id="settingsForm">
         <section class="card">
           <h2 data-i18n="transcriptProvider">Transcript provider</h2>
+          <fieldset class="radio-group">
+            <legend data-i18n="transcriptSourceLegend">
+              Transcript source
+            </legend>
+            <label class="radio-option">
+              <input
+                type="radio"
+                name="transcriptSource"
+                value="auto"
+                checked
+              />
+              <span data-i18n="transcriptSourceAuto"
+                >Free YouTube captions first (recommended, falls back to
+                Supadata)</span
+              >
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="transcriptSource" value="supadata" />
+              <span data-i18n="transcriptSourceSupadata">Supadata only</span>
+            </label>
+          </fieldset>
+          <p class="help" data-i18n="transcriptSourceHelp">
+            Free captions read YouTube's own caption tracks and do not consume
+            Supadata credits.
+          </p>
           <label for="supadataApiKey" data-i18n="supadataApiKeyLabel"
-            >Supadata API key</label
+            >Supadata API key (optional)</label
           >
           <input
             id="supadataApiKey"
@@ -72,6 +97,9 @@
               >. Supadata generates the key during onboarding.</span
             >
           </p>
+          <p class="help" data-i18n="supadataOptionalHelp">
+            Only used when free captions fail and the fallback is enabled.
+          </p>
         </section>
 
         <section class="card">
@@ -81,11 +109,28 @@
             aria-label="Supported AI provider"
             data-i18n-aria-label="providerSummaryLabel"
           >
-            <span class="provider-name">DeepSeek V4 Flash</span>
+            <span class="provider-name" data-i18n="providerName"
+              >DeepSeek official API (default)</span
+            >
             <span class="provider-badge" data-i18n="providerBadge"
-              >Supported in this version</span
+              >Model editable</span
             >
           </div>
+
+          <label for="aiModel" data-i18n="aiModelLabel">Model name</label>
+          <input
+            id="aiModel"
+            name="aiModel"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            data-i18n-placeholder="aiModelPlaceholder"
+            placeholder="deepseek-v4-flash"
+          />
+          <p class="help" data-i18n="aiModelHelp">
+            Enter a DeepSeek official model name, or your own model name (for
+            example ds1017).
+          </p>
 
           <label for="aiApiKey" data-i18n="deepseekApiKeyLabel"
             >DeepSeek API key</label
@@ -116,6 +161,46 @@
             When you use AI features, DeepSeek receives the video transcript
             and relevant video context. Review DeepSeek's terms and pricing
             before saving.
+          </div>
+
+          <details class="advanced-settings">
+            <summary data-i18n="advancedBaseUrlSummary">
+              API base URL (advanced)
+            </summary>
+            <div class="advanced-settings-body">
+              <label for="aiBaseUrl" data-i18n="aiBaseUrlLabel"
+                >API base URL</label
+              >
+              <input
+                id="aiBaseUrl"
+                name="aiBaseUrl"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                data-i18n-placeholder="aiBaseUrlPlaceholder"
+                placeholder="https://api.deepseek.com"
+              />
+              <p class="help" data-i18n="aiBaseUrlHelp">
+                Defaults to https://api.deepseek.com. OpenAI-compatible
+                endpoints are supported; saving a custom address asks Chrome
+                for permission to access that domain.
+              </p>
+            </div>
+          </details>
+
+          <div class="test-connection">
+            <button
+              id="testAiConnectionBtn"
+              type="button"
+              data-i18n="testAiConnection"
+            >
+              Test connection
+            </button>
+            <span
+              id="testAiConnectionStatus"
+              role="status"
+              aria-live="polite"
+            ></span>
           </div>
         </section>
 

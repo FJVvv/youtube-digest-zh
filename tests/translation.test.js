@@ -509,7 +509,7 @@ test("all AI product requests use DeepSeek non-thinking and JSON behavior", asyn
   const backgroundSource = read("background.js");
   assert.equal(
     (backgroundSource.match(/await requestAiCompletion\(\{/g) || []).length,
-    4,
+    6,
   );
   assert.doesNotMatch(backgroundSource, /disableThinking/);
   for (const callPath of [
@@ -517,12 +517,88 @@ test("all AI product requests use DeepSeek non-thinking and JSON behavior", asyn
     "cleanupNoteText",
     "handleExplainSelection",
     "callAiTranslation",
+    "handleChatAsk",
+    "handleTestAiConnection",
   ]) {
     assert.match(
       backgroundSource,
       new RegExp(`async function ${callPath}\\([\\s\\S]*?requestAiCompletion\\(\\{`),
     );
   }
+});
+
+test("custom AI endpoints omit DeepSeek-only request fields", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    settings: {
+      provider: "deepseek",
+      aiApiKey: "test-key",
+      aiBaseUrl: "https://api.example.com/v1",
+      aiModel: "ds1017",
+    },
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "answer" } }],
+        }),
+      };
+    },
+  });
+
+  const result = await helpers.requestAiCompletion({
+    maxTokens: 64,
+    responseFormat: { type: "json_object" },
+    messages: [{ role: "user", content: "Hello." }],
+  });
+
+  assert.equal(result.text, "answer");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].model, "ds1017");
+  assert.equal(Object.hasOwn(requests[0], "thinking"), false);
+  assert.deepEqual(requests[0].response_format, { type: "json_object" });
+});
+
+test("custom AI endpoints retry once without unsupported fields", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    settings: {
+      provider: "deepseek",
+      aiApiKey: "test-key",
+      aiBaseUrl: "https://api.example.com/v1",
+      aiModel: "ds1017",
+    },
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      if (requests.length === 1) {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: { message: "unsupported" } }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "retried" } }],
+        }),
+      };
+    },
+  });
+
+  const result = await helpers.requestAiCompletion({
+    maxTokens: 64,
+    responseFormat: { type: "json_object" },
+    messages: [{ role: "user", content: "Hello." }],
+  });
+
+  assert.equal(result.text, "retried");
+  assert.equal(requests.length, 2);
+  assert.equal(Object.hasOwn(requests[1], "response_format"), false);
+  assert.equal(Object.hasOwn(requests[1], "thinking"), false);
 });
 
 test("blank-line chunks reset provider idle timeout and valid JSON succeeds", async () => {

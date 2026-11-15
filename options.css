@@ -142,6 +142,44 @@ textarea:focus {
   outline: 3px solid rgba(200, 103, 79, 0.14);
 }
 
+.radio-group {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fdfaf6;
+}
+
+.radio-group legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.radio-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.radio-option input[type="radio"] {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  accent-color: var(--accent);
+}
+
 textarea {
   min-height: 190px;
   resize: vertical;
@@ -166,6 +204,61 @@ a {
   background: #f8eee9;
   color: #60483f;
   font-size: 13px;
+}
+
+.advanced-settings {
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fbf7f1;
+  overflow: hidden;
+}
+
+.advanced-settings summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.advanced-settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-settings summary::after {
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--accent-hover);
+  border-bottom: 2px solid var(--accent-hover);
+  content: "";
+  transform: rotate(45deg);
+  transition: transform 0.18s ease;
+}
+
+.advanced-settings[open] summary::after {
+  transform: rotate(225deg);
+}
+
+.advanced-settings-body {
+  padding: 0 14px 14px;
+}
+
+.advanced-settings-body label {
+  margin-top: 0;
+}
+
+.test-connection {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
 }
 
 .provider-summary,
@@ -341,9 +434,23 @@ button.danger {
   color: var(--danger);
 }
 
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button:disabled:hover {
+  border-color: var(--border);
+}
+
+button.primary:disabled:hover {
+  background: var(--accent);
+}
+
 #saveStatus,
 #dataStatus,
-#copyStatus {
+#copyStatus,
+#testAiConnectionStatus {
   color: var(--muted);
   font-size: 13px;
 }

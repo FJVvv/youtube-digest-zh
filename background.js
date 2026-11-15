@@ -3,8 +3,8 @@
  *
  * This is the "brain" of the extension. It runs in the background and handles:
  * 1. Opening the side panel when the user clicks the extension icon
- * 2. Fetching YouTube transcripts via Supadata API
- * 3. Calling DeepSeek to analyze the transcript
+ * 2. Fetching YouTube transcripts (free YouTube captions, then Supadata)
+ * 3. Calling the configured AI provider to analyze the transcript
  * 4. Sending results back to the side panel
  *
  * Think of it like a backend server — it does the heavy lifting
@@ -19,6 +19,7 @@ const DEBUG = false;
 const AI_PROVIDER_IDLE_TIMEOUT_MS = 50_000;
 const AI_PROVIDER_HARD_TIMEOUT_MS = 120_000;
 const AI_PROVIDER_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const FREE_CAPTIONS_TIMEOUT_MS = 20_000;
 const debugLog = (...args) => {
   if (DEBUG) console.log(...args);
 };
@@ -72,20 +73,24 @@ async function loadPromptSection(fileName, heading, variables = {}) {
   return prompt;
 }
 
-async function requestAiCompletion({
-  messages,
-  maxTokens,
-  temperature,
-  responseFormat,
-}) {
-  const settings = await getSettings();
-  if (!settings.aiApiKey) {
-    const error = new Error(
-      "未配置 DeepSeek API 密钥。请打开 YouTube Digest 设置。",
-    );
-    error.code = "NO_AI_KEY";
-    throw error;
+function isOfficialDeepSeekEndpoint(baseUrl) {
+  try {
+    return new URL(String(baseUrl || "")).host === "api.deepseek.com";
+  } catch (_error) {
+    return false;
   }
+}
+
+/**
+ * Builds the OpenAI-compatible chat payload for one provider.
+ * DeepSeek-specific fields are attached only when requested, because other
+ * OpenAI-compatible services reject unknown request fields with HTTP 400.
+ */
+function buildAiRequestBody(
+  settings,
+  { messages, maxTokens, temperature, responseFormat },
+  { includeProviderExtensions = true } = {},
+) {
   const body = {
     model: settings.aiModel,
     max_tokens: maxTokens,
@@ -95,9 +100,20 @@ async function requestAiCompletion({
   if (responseFormat) {
     body.response_format = responseFormat;
   }
-  // Product features need bounded, predictable latency rather than reasoning traces.
-  body.thinking = { type: "disabled" };
+  // Product features need bounded, predictable latency rather than reasoning
+  // traces.
+  if (includeProviderExtensions) {
+    body.thinking = { type: "disabled" };
+  }
+  return body;
+}
 
+/**
+ * Posts one chat-completion request and enforces the idle/hard timeouts.
+ * Error responses are returned rather than thrown so callers can retry with a
+ * simpler request shape when a provider rejects unsupported fields.
+ */
+async function postChatCompletion({ url, apiKey, body }) {
   const controller = new AbortController();
   let timeoutKind = "";
   let idleTimeoutId;
@@ -121,54 +137,37 @@ async function requestAiCompletion({
   );
   resetIdleTimeout();
   try {
-    const response = await fetch(
-      YTD_SETTINGS.chatCompletionsUrl(),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${settings.aiApiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
       },
-    );
-    // Receiving headers proves DeepSeek is still making progress. DeepSeek
-    // may then send blank-line body chunks while a non-streaming request queues.
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    // Receiving headers proves the provider is still making progress. Some
+    // providers then send blank-line body chunks while a non-streaming request
+    // queues.
     resetIdleTimeout();
 
-    const data = await readBoundedAiResponse(response, resetIdleTimeout);
-    if (!response.ok) {
-      const errorData = data && typeof data === "object" ? data : {};
-      const error = new Error(
-        errorData.error?.message ||
-          errorData.message ||
-          `DeepSeek 错误：${response.status}`,
-      );
-      error.status = response.status;
-      throw error;
+    let data;
+    try {
+      data = await readBoundedAiResponse(response, resetIdleTimeout);
+    } catch (readError) {
+      // Error responses are not guaranteed to be JSON; keep the HTTP status.
+      if (response.ok) throw readError;
+      data = null;
     }
-
-    const text = data.choices?.[0]?.message?.content;
-    if (typeof text !== "string" || !text.trim()) {
-      const error = new Error("DeepSeek 返回了空响应。");
-      error.code = "EMPTY_AI_RESPONSE";
-      throw error;
-    }
-
-    return { text, settings };
+    return { response, data };
   } catch (error) {
     if (timeoutKind === "idle") {
-      const timeoutError = new Error(
-        "DeepSeek 请求已连续 50 秒无响应，请重试。",
-      );
+      const timeoutError = new Error("AI 请求已连续 50 秒无响应，请重试。");
       timeoutError.code = "AI_IDLE_TIMEOUT";
       throw timeoutError;
     }
     if (timeoutKind === "hard") {
-      const timeoutError = new Error(
-        "DeepSeek 请求超过 120 秒上限，请重试。",
-      );
+      const timeoutError = new Error("AI 请求超过 120 秒上限，请重试。");
       timeoutError.code = "AI_HARD_TIMEOUT";
       throw timeoutError;
     }
@@ -177,6 +176,75 @@ async function requestAiCompletion({
     clearTimeout(idleTimeoutId);
     clearTimeout(hardTimeoutId);
   }
+}
+
+async function requestAiCompletion({
+  messages,
+  maxTokens,
+  temperature,
+  responseFormat,
+}) {
+  const settings = await getSettings();
+  if (!settings.aiApiKey) {
+    const error = new Error(
+      "未配置 AI API 密钥。请打开 YouTube Digest 设置。",
+    );
+    error.code = "NO_AI_KEY";
+    throw error;
+  }
+
+  const isOfficialDeepSeek = YTD_SETTINGS.isOfficialDeepSeekBase
+    ? YTD_SETTINGS.isOfficialDeepSeekBase(settings.aiBaseUrl)
+    : isOfficialDeepSeekEndpoint(settings.aiBaseUrl);
+  const url = YTD_SETTINGS.chatCompletionsUrl(settings.aiBaseUrl);
+  const options = { messages, maxTokens, temperature, responseFormat };
+
+  let attempt = await postChatCompletion({
+    url,
+    apiKey: settings.aiApiKey,
+    body: buildAiRequestBody(settings, options, {
+      includeProviderExtensions: isOfficialDeepSeek,
+    }),
+  });
+
+  // OpenAI-compatible providers differ in which request fields they accept.
+  // Retry once without the optional extensions before surfacing the error.
+  if (
+    !attempt.response.ok &&
+    !isOfficialDeepSeek &&
+    (attempt.response.status === 400 || attempt.response.status === 422)
+  ) {
+    attempt = await postChatCompletion({
+      url,
+      apiKey: settings.aiApiKey,
+      body: buildAiRequestBody(
+        settings,
+        { ...options, responseFormat: undefined },
+        { includeProviderExtensions: false },
+      ),
+    });
+  }
+
+  if (!attempt.response.ok) {
+    const errorData =
+      attempt.data && typeof attempt.data === "object" ? attempt.data : {};
+    const error = new Error(
+      errorData.error?.message ||
+        errorData.message ||
+        `AI 服务错误：${attempt.response.status}`,
+    );
+    error.status = attempt.response.status;
+    throw error;
+  }
+
+  const text = attempt.data?.choices?.[0]?.message?.content;
+  if (typeof text !== "string" || !text.trim()) {
+    const error = new Error("AI 服务返回了空响应。");
+    error.code = "EMPTY_AI_RESPONSE";
+    throw error;
+  }
+
+  return { text, settings };
 }
 
 async function readBoundedAiResponse(response, onActivity) {
@@ -188,13 +256,13 @@ async function readBoundedAiResponse(response, onActivity) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      // Every received chunk is activity, including DeepSeek's blank lines.
+      // Every received chunk is activity, including the provider's blank lines.
       onActivity();
       const byteLength = value?.byteLength ?? 0;
       responseBytes += byteLength;
       if (responseBytes > AI_PROVIDER_MAX_RESPONSE_BYTES) {
         await reader.cancel?.().catch(() => {});
-        const error = new Error("DeepSeek 响应超过 2 MiB 限制。");
+        const error = new Error("AI 响应超过 2 MiB 限制。");
         error.code = "AI_RESPONSE_TOO_LARGE";
         throw error;
       }
@@ -211,7 +279,7 @@ async function readBoundedAiResponse(response, onActivity) {
     onActivity();
     const byteLength = new TextEncoder().encode(responseText).byteLength;
     if (byteLength > AI_PROVIDER_MAX_RESPONSE_BYTES) {
-      const error = new Error("DeepSeek 响应超过 2 MiB 限制。");
+      const error = new Error("AI 响应超过 2 MiB 限制。");
       error.code = "AI_RESPONSE_TOO_LARGE";
       throw error;
     }
@@ -350,10 +418,37 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // We need to return true to indicate we'll respond asynchronously
   if (message.action === "fetchTranscript") {
-    handleFetchTranscript(message.videoId)
+    handleFetchTranscript(
+      message.videoId,
+      message.tabId,
+      message.transcriptSource,
+    )
       .then(sendResponse)
       .catch((err) => sendResponse({ error: err.message }));
     return true; // Keep the message channel open for async response
+  }
+
+  if (message.action === "chatAsk") {
+    // One turn of the video conversation. The side panel sends the transcript
+    // and the prior messages so this handler stays stateless.
+    handleChatAsk({
+      transcriptText: message.transcriptText,
+      videoTitle: message.videoTitle,
+      channelName: message.channelName,
+      videoDescription: message.videoDescription,
+      messages: message.messages,
+      question: message.question,
+    })
+      .then(sendResponse)
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "testAiConnection") {
+    handleTestAiConnection()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
   }
 
   if (message.action === "analyzeTranscript") {
@@ -624,29 +719,138 @@ async function getPlayerVideoDetails(tabId) {
 }
 
 // ============================================================
-// TRANSCRIPT FETCHING VIA SUPADATA API
+// TRANSCRIPT FETCHING (FREE YOUTUBE CAPTIONS, THEN SUPADATA)
 // ============================================================
 
 /**
- * Fetches the transcript for a YouTube video using Supadata API.
+ * Formats caption cues captured from the YouTube player into the transcript
+ * shape used by the side panel and the AI prompts.
+ */
+function formatYouTubeCues(cues, language) {
+  const transcript = [];
+  let transcriptTextPlain = "";
+  let transcriptTextTimestamped = "";
+  for (const cue of Array.isArray(cues) ? cues : []) {
+    const text = String(cue?.text || "")
+      .replace(/>> ?/g, "")
+      .trim();
+    if (!text) continue;
+    const startSeconds = Math.max(0, Math.floor(Number(cue.start) || 0));
+    const minutes = Math.floor(startSeconds / 60);
+    const seconds = startSeconds % 60;
+    const timestamp = `${minutes}:${String(seconds).padStart(2, "0")}`;
+    transcript.push({
+      text,
+      start: startSeconds,
+      duration: Math.max(0, Math.floor(Number(cue.duration) || 0)),
+      language: cue.language || language || null,
+    });
+    transcriptTextPlain += `${text} `;
+    transcriptTextTimestamped += `[${timestamp}] ${text}\n`;
+  }
+  if (transcript.length === 0) return null;
+  return {
+    success: true,
+    transcriptSource: "youtube",
+    transcript,
+    transcriptText: transcriptTextPlain.trim(),
+    transcriptTextTimestamped: transcriptTextTimestamped.trim(),
+    language: language || transcript[0].language || null,
+  };
+}
+
+/**
+ * Resolves the YouTube tab that should provide captions. The side panel passes
+ * its tab id, but the active tab is a safe fallback for direct calls.
+ */
+async function resolveYouTubeTabId(tabId) {
+  if (Number.isInteger(tabId)) return tabId;
+  const tabs = await chrome.tabs.query({
+    active: true,
+    lastFocusedWindow: true,
+  });
+  return tabs?.[0]?.id ?? null;
+}
+
+/**
+ * Tries to read the video's own caption track for free.
+ * Returns null on any failure so the caller can fall back to Supadata.
+ */
+async function fetchYouTubeTranscript(videoId, tabId) {
+  try {
+    const resolvedTabId = await resolveYouTubeTabId(tabId);
+    if (!resolvedTabId) return null;
+    const timeout = new Promise((resolve) =>
+      setTimeout(() => resolve(null), FREE_CAPTIONS_TIMEOUT_MS),
+    );
+    const response = await Promise.race([
+      chrome.tabs.sendMessage(resolvedTabId, {
+        action: "extractFreeCaptions",
+        videoId,
+      }),
+      timeout,
+    ]);
+    if (
+      !response ||
+      response.success !== true ||
+      !Array.isArray(response.cues)
+    ) {
+      debugLog(
+        "[YouTube Digest BG] Free caption extraction unavailable:",
+        response?.code || response?.error || response?.message || "empty response",
+      );
+      return null;
+    }
+    return formatYouTubeCues(response.cues, response.language);
+  } catch (error) {
+    debugLog("[YouTube Digest BG] Free caption extraction failed:", error);
+    return null;
+  }
+}
+
+/**
+ * Fetches the transcript for a YouTube video.
+ *
+ * Reads YouTube's own captions first (free), then falls back to Supadata when
+ * it is configured and the free path failed.
  *
  * Supadata is a specialized service that reliably extracts transcripts
- * from YouTube videos. It handles all the complexity of parsing YouTube's
- * internal data structures, dealing with different caption formats, etc.
+ * from YouTube videos. It stays available as an opt-in fallback (see the
+ * 字幕服务 setting) so a video's own captions are always preferred.
  *
  * API Docs: https://docs.supadata.ai
  *
  * @param {string} videoId - The YouTube video ID (e.g., "dQw4w9WgXcQ")
- * @returns {Object} - { success, transcript, transcriptText, language } or { success: false, error }
+ * @param {number|null} tabId - The YouTube tab that should provide captions
+ * @param {string} transcriptSource - "auto" (free captions, then Supadata) or "supadata"
+ * @returns {Object} - { success, transcriptSource, transcript, transcriptText, transcriptTextTimestamped, language } or { success: false, error, message }
  */
-async function handleFetchTranscript(videoId) {
+async function handleFetchTranscript(
+  videoId,
+  tabId = null,
+  transcriptSource = "auto",
+) {
   try {
     const settings = await getSettings();
+    const source =
+      transcriptSource === "supadata" || settings.transcriptSource === "supadata"
+        ? "supadata"
+        : "auto";
+
+    // Free path first: parse the captions YouTube already loaded in the page.
+    if (source === "auto") {
+      const freeTranscript = await fetchYouTubeTranscript(videoId, tabId);
+      if (freeTranscript) return freeTranscript;
+    }
+
     if (!settings.supadataApiKey) {
       return {
         success: false,
         error: "NO_SUPADATA_KEY",
-        message: "未配置 Supadata API 密钥。请打开 YouTube Digest 设置。",
+        message:
+          source === "auto"
+            ? "无法读取 YouTube 自带字幕，且未配置 Supadata API 密钥。请打开 YouTube Digest 设置。"
+            : "未配置 Supadata API 密钥。请打开 YouTube Digest 设置。",
       };
     }
 
@@ -762,6 +966,7 @@ async function handleFetchTranscript(videoId) {
 
     return {
       success: true,
+      transcriptSource: "supadata",
       transcript: transcript,
       transcriptText: transcriptTextPlain.trim(), // For display
       transcriptTextTimestamped: transcriptTextTimestamped.trim(), // For AI
@@ -836,6 +1041,7 @@ async function pollTranscriptJob(jobId, supadataApiKey) {
 
       return {
         success: true,
+        transcriptSource: "supadata",
         transcript: transcript,
         transcriptText: transcriptTextPlain.trim(),
         transcriptTextTimestamped: transcriptTextTimestamped.trim(),
@@ -921,7 +1127,7 @@ async function handleAnalyzeTranscript(
       return {
         success: false,
         error: "NO_AI_KEY",
-        message: "未配置 DeepSeek API 密钥。请打开 YouTube Digest 设置。",
+        message: "未配置 AI API 密钥。请打开 YouTube Digest 设置。",
       };
     }
 
@@ -1002,14 +1208,14 @@ async function handleAnalyzeTranscript(
       return {
         success: false,
         error: "INVALID_AI_KEY",
-        message: "DeepSeek 拒绝了该 API 密钥。",
+        message: "AI 服务拒绝了该 API 密钥。",
       };
     }
     if (error.status === 429) {
       return {
         success: false,
         error: "RATE_LIMITED",
-        message: "DeepSeek 请求频率受限，请稍后重试。",
+        message: "AI 服务请求频率受限，请稍后重试。",
       };
     }
     return {
@@ -1453,7 +1659,7 @@ async function handleExplainSelection(
       return {
         success: false,
         error: "NO_AI_KEY",
-        message: "未配置 DeepSeek API 密钥。",
+        message: "未配置 AI API 密钥。",
       };
     }
 
@@ -1714,6 +1920,215 @@ async function callAiTranslation(
   }
 }
 
+// ============================================================
+// VIDEO CHAT
+// ============================================================
+
+const CHAT_TRANSCRIPT_MAX_CHARS = 40_000;
+const CHAT_HISTORY_MAX_MESSAGES = 20;
+const CHAT_MAX_TOKENS = 2_048;
+
+/**
+ * Keeps the beginning and the end of an over-long transcript so the model sees
+ * both the setup and the conclusion of the video.
+ */
+function truncateTranscriptForChat(
+  transcriptText,
+  maxChars = CHAT_TRANSCRIPT_MAX_CHARS,
+) {
+  const text = String(transcriptText || "").trim();
+  if (text.length <= maxChars) return text;
+  const headLength = Math.floor(maxChars * 0.7);
+  const tailLength = maxChars - headLength;
+  return [
+    text.slice(0, headLength),
+    "[…字幕中间部分因长度限制已省略…]",
+    text.slice(text.length - tailLength),
+  ].join("\n\n");
+}
+
+/**
+ * Keeps only well-formed user/assistant turns and caps how much history is
+ * resent with each question.
+ */
+function normalizeChatHistory(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .filter(
+      (message) =>
+        message &&
+        (message.role === "user" || message.role === "assistant") &&
+        typeof message.content === "string" &&
+        message.content.trim(),
+    )
+    .map((message) => ({
+      role: message.role,
+      content: message.content.trim(),
+    }))
+    .slice(-CHAT_HISTORY_MAX_MESSAGES);
+}
+
+/**
+ * Answers one question about the current video.
+ *
+ * The side panel owns the conversation state and sends the prior turns, so this
+ * handler stays stateless between questions.
+ */
+async function handleChatAsk({
+  transcriptText,
+  videoTitle,
+  channelName,
+  videoDescription,
+  messages,
+  question,
+}) {
+  try {
+    const settings = await getSettings();
+    if (!settings.aiApiKey) {
+      return {
+        success: false,
+        error: "NO_AI_KEY",
+        message: "未配置 AI API 密钥。请打开 YouTube Digest 设置。",
+      };
+    }
+
+    const trimmedQuestion = String(question || "").trim();
+    if (!trimmedQuestion) {
+      return {
+        success: false,
+        error: "EMPTY_QUESTION",
+        message: "请输入你的问题。",
+      };
+    }
+
+    const transcript = truncateTranscriptForChat(transcriptText);
+    if (!transcript) {
+      return {
+        success: false,
+        error: "CHAT_NO_TRANSCRIPT",
+        message: "当前视频还没有字幕，无法进行对话。",
+      };
+    }
+
+    const promptVariables = {
+      videoTitle: videoTitle || "Unknown",
+      channelName: channelName || "Unknown",
+      videoDescription: videoDescription || "No description available",
+      transcriptText: transcript,
+    };
+    const systemPrompt = await loadPromptSection(
+      "chat.md",
+      "System prompt",
+      promptVariables,
+    );
+    const userPrompt = await loadPromptSection("chat.md", "User prompt", {
+      question: trimmedQuestion,
+    });
+
+    const { text } = await requestAiCompletion({
+      maxTokens: CHAT_MAX_TOKENS,
+      temperature: 0.7,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...normalizeChatHistory(messages),
+        { role: "user", content: userPrompt },
+      ],
+    });
+
+    return {
+      success: true,
+      answer: String(text || "").trim(),
+      model: settings.aiModel,
+    };
+  } catch (error) {
+    console.error("Chat error:", error);
+    if (error.status === 401) {
+      return {
+        success: false,
+        error: "INVALID_AI_KEY",
+        message: "AI 服务拒绝了该 API 密钥。",
+      };
+    }
+    if (error.status === 429) {
+      return {
+        success: false,
+        error: "RATE_LIMITED",
+        message: "AI 服务请求频率受限，请稍后重试。",
+      };
+    }
+    if (
+      error.code === "AI_IDLE_TIMEOUT" ||
+      error.code === "AI_HARD_TIMEOUT"
+    ) {
+      return {
+        success: false,
+        error: "AI_TIMEOUT",
+        message: "AI 服务响应超时，请重试。",
+      };
+    }
+    return {
+      success: false,
+      error: error.code || "CHAT_FAILED",
+      message: error.message || "对话失败",
+    };
+  }
+}
+
+/**
+ * Sends a tiny request so the options page can verify the saved key, endpoint
+ * and model before the user relies on them.
+ */
+async function handleTestAiConnection() {
+  let settings;
+  try {
+    settings = await getSettings();
+    if (!settings.aiApiKey) {
+      return {
+        success: false,
+        error: "NO_AI_KEY",
+        message: "未配置 AI API 密钥。请打开 YouTube Digest 设置。",
+      };
+    }
+    const { text } = await requestAiCompletion({
+      maxTokens: 16,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: "You are a connection test. Reply with the single word OK.",
+        },
+        { role: "user", content: "ping" },
+      ],
+    });
+    return {
+      success: true,
+      model: settings.aiModel,
+      reply: String(text || "").trim().slice(0, 40),
+    };
+  } catch (error) {
+    if (error.status === 401) {
+      return {
+        success: false,
+        error: "INVALID_AI_KEY",
+        message: "AI 服务拒绝了该 API 密钥。",
+      };
+    }
+    const message = String(error.message || "");
+    if (error.status === 404 || /model/i.test(message)) {
+      return {
+        success: false,
+        error: "MODEL_NOT_FOUND",
+        message: `AI 服务找不到模型「${settings?.aiModel || ""}」。服务返回：${message.slice(0, 240)}`,
+      };
+    }
+    return {
+      success: false,
+      error: error.code || "AI_TEST_FAILED",
+      message: message || "无法连接到 AI 服务。",
+    };
+  }
+}
+
 // Pure validators are exposed for the repository's Node tests only.
 globalThis.__YTD_TRANSLATION_TESTING__ = {
   requestAiCompletion,
@@ -1724,4 +2139,11 @@ globalThis.__YTD_TRANSLATION_TESTING__ = {
   handleTranslateContent,
   closePanelForTab,
   updatePanelForTab,
+  handleFetchTranscript,
+  handleChatAsk,
+  handleTestAiConnection,
+  formatYouTubeCues,
+  truncateTranscriptForChat,
+  buildAiRequestBody,
+  isOfficialDeepSeekEndpoint,
 };

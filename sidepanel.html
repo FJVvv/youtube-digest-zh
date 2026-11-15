@@ -66,6 +66,7 @@
         <button class="tab active" data-tab="transcript">字幕</button>
         <button class="tab" data-tab="overview">概览</button>
         <button class="tab" data-tab="notes">笔记</button>
+        <button class="tab" data-tab="chat">对话</button>
       </div>
     </div>
 
@@ -117,6 +118,7 @@
                 </button>
               </div>
             </div>
+            <p class="transcript-source-note" id="transcriptSourceNote" hidden></p>
             <!-- Search stays inside the Transcript tab and never changes playback. -->
             <div class="transcript-search" role="search">
               <svg
@@ -246,6 +248,48 @@
               将鼠标移到视频上并点击“笔记”即可保存带时间戳的笔记，也可在视频聚焦时按 n 键。
             </p>
             <div id="notesList"></div>
+          </div>
+        </div>
+
+        <!-- TAB: Chat (manual Q&A over the current video's transcript) -->
+        <div class="tab-panel" data-panel="chat">
+          <div class="section">
+            <div class="section-header">
+              <div class="section-title">视频对话</div>
+              <button
+                class="enhance-btn"
+                id="chatExportBtn"
+                type="button"
+                disabled
+              >
+                导出
+              </button>
+            </div>
+            <div class="chat-reference" id="chatReferenceCard">
+              <div class="chat-reference-text" id="chatReference"></div>
+            </div>
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-empty" id="chatEmpty">
+              还没有对话。在下面输入问题，点发送后 AI 才会回答。
+            </div>
+            <div class="chat-composer">
+              <textarea
+                class="chat-input"
+                id="chatInput"
+                rows="3"
+                placeholder="问问这个视频，例如：用它自己的话总结重点"
+              ></textarea>
+              <div class="chat-composer-footer">
+                <span class="chat-hint">Enter 发送，Shift + Enter 换行</span>
+                <button
+                  class="enhance-btn chat-send-btn"
+                  id="chatSendBtn"
+                  type="button"
+                >
+                  发送
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

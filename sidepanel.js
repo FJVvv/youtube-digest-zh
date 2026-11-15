@@ -21,6 +21,7 @@ let currentTranscript = null;
 let currentTranscriptText = null; // Plain text (for display/export)
 let currentTranscriptTimestamped = null; // With timestamps for AI analysis
 let currentTranscriptLanguage = null;
+let currentTranscriptSource = null; // "youtube" | "supadata" | null
 let currentVideoTitle = "";
 let currentChannelName = "";
 let currentVideoDescription = "";
@@ -28,6 +29,8 @@ let currentVideoDuration = 0;
 let isAnalysisLoading = false; // Track if analysis is in progress
 let youtubeTabId = null; // Store the YouTube tab ID for reliable messaging
 let errorAction = null;
+let chatMessages = []; // { role: "user" | "assistant", content: string }
+let isChatSending = false;
 
 // --- Translation state ---
 // The universal language control supports original content, Chinese, and an
@@ -457,6 +460,17 @@ function setupEventListeners() {
     setNotesFilter(true);
     loadNotes(null); // Load all notes
   });
+
+  // Chat tab — sending is manual only. Opening the tab never calls the model.
+  document
+    .getElementById("chatSendBtn")
+    ?.addEventListener("click", () => void sendChatMessage());
+  document
+    .getElementById("chatInput")
+    ?.addEventListener("keydown", handleChatInputKeydown);
+  document
+    .getElementById("chatExportBtn")
+    ?.addEventListener("click", exportChat);
 }
 
 function setNotesFilter(showAll) {
@@ -578,6 +592,9 @@ async function startDigest(videoId, videoUrl) {
     if (transcriptScrollObserver) transcriptScrollObserver.disconnect();
     transcriptScrollObserver = null;
     resetTranscriptSearch();
+    // Chat history belongs to one video: drop it before either branch (cache
+    // hit or fresh fetch) fills in the new video.
+    resetChat();
     lastTranscriptScrollTop = 0;
     pendingTranscriptViewState = await loadTranscriptViewState(videoId);
     // An unseen video always starts in Original, so opening it never spends
@@ -602,6 +619,7 @@ async function startDigest(videoId, videoUrl) {
     currentTranscriptText = cached.transcriptText;
     currentTranscriptTimestamped = cached.transcriptTimestamped;
     currentTranscriptLanguage = cached.transcriptLanguage || null;
+    currentTranscriptSource = cached.transcriptSource || null;
     isAnalysisLoading = false;
 
     // Restore semantic-segment translations from persistent storage.
@@ -635,6 +653,7 @@ async function startDigest(videoId, videoUrl) {
     showState("results");
     document.getElementById("tabsNav").style.display = "flex";
     restorePendingTranscriptViewState(videoId);
+    renderChatReference();
 
     // Load notes for this video
     loadNotes(videoId);
@@ -652,6 +671,7 @@ async function startDigest(videoId, videoUrl) {
   currentTranscriptText = null;
   currentTranscriptTimestamped = null;
   currentTranscriptLanguage = null;
+  currentTranscriptSource = null;
   isAnalysisLoading = false;
 
   if (currentVideoTitle || currentChannelName) {
@@ -667,6 +687,7 @@ async function startDigest(videoId, videoUrl) {
   const transcriptResult = await chrome.runtime.sendMessage({
     action: "fetchTranscript",
     videoId: videoId,
+    tabId: youtubeTabId,
   });
 
   if (!transcriptResult.success) {
@@ -688,12 +709,14 @@ async function startDigest(videoId, videoUrl) {
   currentTranscriptText = transcriptResult.transcriptText;
   currentTranscriptTimestamped = transcriptResult.transcriptTextTimestamped;
   currentTranscriptLanguage = transcriptResult.language || null;
+  currentTranscriptSource = transcriptResult.transcriptSource || null;
 
   // Render transcript immediately (no LLM needed)
   renderTranscript();
   showState("results");
   document.getElementById("tabsNav").style.display = "flex";
   restorePendingTranscriptViewState(videoId);
+  renderChatReference();
 
   // Load notes for this video
   loadNotes(videoId);
@@ -1060,6 +1083,27 @@ function seekFromTranscriptEntryClick(event, seconds) {
   seekTo(seconds);
 }
 
+/**
+ * Shows where the current transcript came from, so users can tell whether a
+ * video used its own free captions or the paid Supadata fallback.
+ */
+function updateTranscriptSourceNote() {
+  const note = document.getElementById("transcriptSourceNote");
+  if (!note) return;
+  if (currentTranscriptSource === "youtube") {
+    note.textContent = "字幕来源：YouTube 自带（免费，不消耗 Supadata 积分）";
+    note.hidden = false;
+    return;
+  }
+  if (currentTranscriptSource === "supadata") {
+    note.textContent = "字幕来源：Supadata（本次已使用 1 积分）";
+    note.hidden = false;
+    return;
+  }
+  note.textContent = "";
+  note.hidden = true;
+}
+
 function renderTranscript() {
   if (!currentTranscript) return;
 
@@ -1068,6 +1112,7 @@ function renderTranscript() {
 
   const existingBadge = document.getElementById("transcriptSourceBadge");
   if (existingBadge) existingBadge.remove();
+  updateTranscriptSourceNote();
 
   // Group entries using smart sentence-boundary + time-guardrail logic
   const grouped = groupTranscriptEntries(currentTranscript);
@@ -1477,6 +1522,13 @@ function switchTab(tabName) {
     });
   }
 
+  // Chat renders local state only — opening it never sends a network request
+  // or triggers a summary. Its message list scrolls on its own, so the
+  // transcript reading position captured above is left untouched.
+  if (tabName === "chat") {
+    renderChatPanel();
+  }
+
   // Translate only the visible tab. This prevents hidden surfaces from using
   // tokens or competing with the batch queue the user is waiting for.
   if (tabName === "overview") {
@@ -1550,6 +1602,233 @@ async function triggerAnalysis() {
   }
 
   isAnalysisLoading = false;
+}
+
+// ============================================================
+// CHAT TAB
+// ============================================================
+
+/**
+ * Chat answers are always grounded in the timestamped transcript, so nothing
+ * can be asked before it exists.
+ */
+function chatHasTranscript() {
+  return Boolean(currentTranscriptTimestamped);
+}
+
+/**
+ * Maps a background error code to the Chinese line shown in the panel.
+ */
+function chatErrorMessage(result) {
+  const code = result && result.error;
+  const messages = {
+    NO_AI_KEY: "未配置 AI 密钥，请打开设置填写。",
+    INVALID_AI_KEY: "AI 密钥无效，请检查设置。",
+    RATE_LIMITED: "请求太频繁，请稍等再试。",
+    AI_TIMEOUT: "请求超时，请重试。",
+  };
+  if (code && messages[code]) return messages[code];
+  return (result && result.message) || "对话失败，请重试。";
+}
+
+/**
+ * Renders the citation card at the top of the chat. It only ever describes
+ * what is already available; it never asks the model anything.
+ */
+function renderChatReference() {
+  const reference = document.getElementById("chatReference");
+  const card = document.getElementById("chatReferenceCard");
+  if (!reference) return;
+
+  const hasTranscript = chatHasTranscript();
+  reference.textContent = hasTranscript
+    ? `已引用本视频：${currentVideoTitle || "当前视频"}`
+    : "字幕不可用，无法对话";
+  card?.classList.toggle("chat-reference-unavailable", !hasTranscript);
+}
+
+function updateChatExportButton() {
+  const exportBtn = document.getElementById("chatExportBtn");
+  if (exportBtn) exportBtn.disabled = chatMessages.length === 0;
+}
+
+function updateChatComposerState() {
+  const sendBtn = document.getElementById("chatSendBtn");
+  if (sendBtn) sendBtn.disabled = isChatSending;
+}
+
+function scrollChatToBottom() {
+  const container = document.getElementById("chatMessages");
+  if (!container) return;
+  requestAnimationFrame(() => {
+    container.scrollTop = container.scrollHeight;
+  });
+}
+
+function clearChatError() {
+  document.getElementById("chatError")?.remove();
+}
+
+/**
+ * Chat errors sit in the message list but are deliberately NOT pushed into
+ * chatMessages: they are never exported and never sent back as context.
+ */
+function showChatError(text) {
+  clearChatError();
+  const container = document.getElementById("chatMessages");
+  if (!container) return;
+  const empty = document.getElementById("chatEmpty");
+  if (empty) empty.style.display = "none";
+  const error = document.createElement("div");
+  error.className = "chat-error";
+  error.id = "chatError";
+  error.setAttribute("role", "status");
+  error.textContent = text;
+  container.appendChild(error);
+  scrollChatToBottom();
+}
+
+/**
+ * Builds every bubble with textContent. Message text comes from the user and
+ * from the model, so it must never be interpreted as HTML.
+ */
+function renderChatMessages() {
+  const container = document.getElementById("chatMessages");
+  const empty = document.getElementById("chatEmpty");
+  if (!container) return;
+
+  container.textContent = "";
+  chatMessages.forEach((message) => {
+    const isAssistant = message.role === "assistant";
+    const bubble = document.createElement("div");
+    bubble.className = `chat-message ${
+      isAssistant ? "chat-message-assistant" : "chat-message-user"
+    }`;
+
+    const label = document.createElement("div");
+    label.className = "chat-message-label";
+    label.textContent = isAssistant ? "AI" : "我";
+
+    const text = document.createElement("div");
+    text.className = "chat-message-text";
+    text.textContent = message.content;
+
+    bubble.append(label, text);
+    container.appendChild(bubble);
+  });
+
+  if (empty) empty.style.display = chatMessages.length ? "none" : "block";
+  updateChatExportButton();
+}
+
+/**
+ * Opening the Chat tab only renders local state. It sends no request and does
+ * not trigger a summary, so reading the tab costs nothing.
+ */
+function renderChatPanel() {
+  renderChatReference();
+  renderChatMessages();
+  updateChatComposerState();
+  scrollChatToBottom();
+}
+
+/**
+ * Drops the conversation when the video changes. Called from startDigest so
+ * both the cache-hit and the fresh-fetch paths clear it.
+ */
+function resetChat() {
+  chatMessages = [];
+  isChatSending = false;
+  clearChatError();
+  const input = document.getElementById("chatInput");
+  if (input) input.value = "";
+  renderChatReference();
+  renderChatMessages();
+  updateChatComposerState();
+}
+
+function handleChatInputKeydown(event) {
+  // Enter sends, Shift + Enter inserts a newline. Never send during IME
+  // composition: that would submit an unfinished Chinese candidate.
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  void sendChatMessage();
+}
+
+async function sendChatMessage() {
+  if (isChatSending) return;
+
+  const input = document.getElementById("chatInput");
+  if (!input) return;
+  const question = input.value.trim();
+
+  if (!chatHasTranscript()) {
+    showChatError("字幕尚未加载，无法对话");
+    return;
+  }
+  if (!question) return;
+
+  clearChatError();
+  chatMessages.push({ role: "user", content: question });
+  input.value = "";
+  isChatSending = true;
+  updateChatComposerState();
+  renderChatMessages();
+  scrollChatToBottom();
+
+  const requestVideoId = currentVideoId;
+
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "chatAsk",
+      videoTitle: currentVideoTitle,
+      channelName: currentChannelName,
+      videoDescription: currentVideoDescription,
+      transcriptText: currentTranscriptTimestamped,
+      messages: chatMessages.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+      question: question,
+    });
+
+    // The user may have switched videos while the request was in flight; the
+    // answer then belongs to a conversation that no longer exists.
+    if (currentVideoId !== requestVideoId) return;
+
+    if (result && result.success && result.answer) {
+      chatMessages.push({ role: "assistant", content: result.answer });
+      renderChatMessages();
+    } else {
+      showChatError(chatErrorMessage(result));
+    }
+  } catch (error) {
+    console.error("[YouTube Digest Panel] Chat error:", error);
+    showChatError("对话失败，请重试。");
+  } finally {
+    isChatSending = false;
+    updateChatComposerState();
+    scrollChatToBottom();
+  }
+}
+
+function exportChat() {
+  if (!chatMessages.length) return;
+
+  const lines = [
+    "YouTube Digest 对话",
+    `视频：${currentVideoTitle || "未知"}`,
+    `频道：${currentChannelName || "未知"}`,
+    "",
+  ];
+  chatMessages.forEach((message) => {
+    const role = message.role === "assistant" ? "AI" : "我";
+    lines.push(`[${role}] ${message.content}`);
+    lines.push("");
+  });
+
+  const filename = `${sanitizeFilename(currentVideoTitle)}-对话.txt`;
+  downloadTextFile(`${lines.join("\n").trimEnd()}\n`, filename);
 }
 
 // ============================================================
@@ -1971,6 +2250,7 @@ async function saveToCache(videoId) {
       transcriptText: currentTranscriptText,
       transcriptTimestamped: currentTranscriptTimestamped,
       transcriptLanguage: currentTranscriptLanguage,
+      transcriptSource: currentTranscriptSource,
       videoTitle: currentVideoTitle,
       channelName: currentChannelName,
       paragraphCache: paragraphCacheForVideo,
@@ -2627,6 +2907,7 @@ function renderTranscriptModeRows(segments, mode) {
 
   const existingBadge = document.getElementById("transcriptSourceBadge");
   if (existingBadge) existingBadge.remove();
+  updateTranscriptSourceNote();
 
   const rows = [];
   segments.forEach((segment, index) => {

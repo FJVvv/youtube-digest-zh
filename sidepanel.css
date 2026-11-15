@@ -343,6 +343,13 @@ body {
   gap: 10px;
 }
 
+.transcript-source-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .global-language-control {
   max-width: 100%;
 }
@@ -1498,4 +1505,170 @@ body {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-dim);
+}
+
+/* ============================================================
+   CHAT TAB
+   ============================================================ */
+
+/* Citation card: a quiet summary of what the answers are grounded in. */
+.chat-reference {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.chat-reference-text {
+  font-family: var(--font-reading);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.chat-reference-unavailable {
+  border-left-color: var(--text-muted);
+}
+
+.chat-reference-unavailable .chat-reference-text {
+  color: var(--accent);
+}
+
+/* The message list scrolls on its own so the composer stays reachable. */
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 2px;
+  margin-bottom: 12px;
+  scrollbar-width: thin;
+}
+
+.chat-messages:empty {
+  display: none;
+}
+
+.chat-empty {
+  font-family: var(--font-reading);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 36px 18px;
+}
+
+.chat-message {
+  max-width: 88%;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.chat-message-user {
+  align-self: flex-end;
+  border-color: var(--accent-dim);
+  background: var(--accent-dim);
+}
+
+.chat-message-assistant {
+  align-self: flex-start;
+  background: var(--surface-raised);
+}
+
+.chat-message-label {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+.chat-message-user .chat-message-label {
+  color: var(--accent);
+}
+
+.chat-message-text {
+  font-family: var(--font-reading);
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-error {
+  align-self: stretch;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* Composer: sticks to the bottom of the panel while messages scroll. */
+.chat-composer {
+  position: sticky;
+  bottom: 0;
+  padding-top: 4px;
+  background: var(--bg);
+}
+
+.chat-input {
+  width: 100%;
+  min-height: 68px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  outline: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: 400 13px/1.6 var(--font-body);
+  resize: vertical;
+  transition: border-color 0.18s ease;
+}
+
+.chat-input::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-input:focus-visible {
+  border-color: var(--accent);
+}
+
+.chat-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.chat-hint {
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.chat-send-btn {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.chat-send-btn:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  color: #fff;
 }

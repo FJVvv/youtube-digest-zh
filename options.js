@@ -11,15 +11,28 @@ const YTD_OPTIONS = (() => {
       lede:
         "Keys stay in this Chrome profile and are sent only to Supadata and DeepSeek. This open-source extension has no developer server or analytics.",
       transcriptProvider: "Transcript provider",
-      supadataApiKeyLabel: "Supadata API key",
+      transcriptSourceLegend: "Transcript source",
+      transcriptSourceAuto:
+        "Free YouTube captions first (recommended, falls back to Supadata)",
+      transcriptSourceSupadata: "Supadata only",
+      transcriptSourceHelp:
+        "Free captions read YouTube's own caption tracks and do not consume Supadata credits.",
+      supadataApiKeyLabel: "Supadata API key (optional)",
       supadataApiKeyPlaceholder: "Paste your Supadata key",
       supadataHelp: "Used to fetch timestamped YouTube subtitles. ",
       supadataLink: "Create a Supadata account and key",
       supadataHelpSuffix:
         ". Supadata generates the key during onboarding.",
+      supadataOptionalHelp:
+        "Only used when free captions fail and the fallback is enabled.",
       aiProvider: "AI provider",
       providerSummaryLabel: "Supported AI provider",
-      providerBadge: "Supported in this version",
+      providerName: "DeepSeek official API (default)",
+      providerBadge: "Model editable",
+      aiModelLabel: "Model name",
+      aiModelPlaceholder: "deepseek-v4-flash",
+      aiModelHelp:
+        "Enter a DeepSeek official model name (for example deepseek-v4-flash, deepseek-flash, or deepseek-v4-pro), or your own model name (for example ds1017).",
       deepseekApiKeyLabel: "DeepSeek API key",
       deepseekApiKeyPlaceholder: "Paste your DeepSeek key",
       deepseekHelp:
@@ -28,6 +41,18 @@ const YTD_OPTIONS = (() => {
       deepseekHelpSuffix: ".",
       privacyNote:
         "When you use AI features, DeepSeek receives the video transcript and relevant video context. Review DeepSeek's terms and pricing before saving.",
+      advancedBaseUrlSummary: "API base URL (advanced)",
+      aiBaseUrlLabel: "API base URL",
+      aiBaseUrlPlaceholder: "https://api.deepseek.com",
+      aiBaseUrlHelp:
+        "Defaults to https://api.deepseek.com. OpenAI-compatible endpoints are supported; saving a custom address asks Chrome for permission to access that domain.",
+      testAiConnection: "Test connection",
+      testingConnection: "Testing connection…",
+      testSuccess: ({ model }) => `Connection succeeded (model: ${model}).`,
+      missingAiKey: "Enter your AI key first.",
+      invalidAiKey: "The API key is invalid.",
+      modelNotFound: "Model name not found. Check it and try again.",
+      testFailed: "Connection failed.",
       saveSettings: "Save settings",
       localRemix: "Local remix",
       customizationTitle: "Want to use another AI model?",
@@ -62,6 +87,10 @@ const YTD_OPTIONS = (() => {
       addSupadataKey: "Add a Supadata API key.",
       addDeepseekKey: "Add a DeepSeek API key.",
       saved: "Saved. Reopen YouTube Digest to use these settings.",
+      savedMissingAiKey:
+        "Saved. Without an AI key, overviews, translation, and chat are unavailable.",
+      permissionDenied:
+        "Access to that API base URL was not granted. The previous address was kept.",
       saveFailed: "Could not save settings. Please try again.",
       copying: "Copying…",
       promptCopied: "Edited prompt copied.",
@@ -83,14 +112,24 @@ const YTD_OPTIONS = (() => {
       lede:
         "密钥仅保存在当前 Chrome 个人资料中，只会发送给 Supadata 和 DeepSeek。本开源扩展没有开发者服务器，也不使用分析服务。",
       transcriptProvider: "字幕服务",
-      supadataApiKeyLabel: "Supadata API 密钥",
+      transcriptSourceLegend: "字幕来源",
+      transcriptSourceAuto: "免费字幕优先（推荐，失败时用 Supadata 兜底）",
+      transcriptSourceSupadata: "仅使用 Supadata",
+      transcriptSourceHelp:
+        "免费字幕直接读取 YouTube 自带字幕轨，不消耗 Supadata 积分。",
+      supadataApiKeyLabel: "Supadata API 密钥（可选）",
       supadataApiKeyPlaceholder: "粘贴你的 Supadata 密钥",
       supadataHelp: "用于获取带时间戳的 YouTube 字幕。",
       supadataLink: "创建 Supadata 账号并获取密钥",
       supadataHelpSuffix: "。Supadata 会在引导流程中生成密钥。",
+      supadataOptionalHelp: "仅在免费字幕读取失败且开启了兜底时使用。",
       aiProvider: "AI 服务",
       providerSummaryLabel: "支持的 AI 服务",
-      providerBadge: "当前版本支持",
+      providerName: "DeepSeek 官方 API（默认）",
+      providerBadge: "可修改模型",
+      aiModelLabel: "模型名称",
+      aiModelPlaceholder: "deepseek-v4-flash",
+      aiModelHelp: "填 DeepSeek 官方模型名（如 deepseek-v4-flash、deepseek-flash、deepseek-v4-pro），或你自己的模型名（例如 ds1017）。",
       deepseekApiKeyLabel: "DeepSeek API 密钥",
       deepseekApiKeyPlaceholder: "粘贴你的 DeepSeek 密钥",
       deepseekHelp:
@@ -99,6 +138,18 @@ const YTD_OPTIONS = (() => {
       deepseekHelpSuffix: "。",
       privacyNote:
         "使用 AI 功能时，DeepSeek 会收到视频字幕及相关视频上下文。保存前请查看 DeepSeek 的服务条款和价格。",
+      advancedBaseUrlSummary: "接口地址（高级）",
+      aiBaseUrlLabel: "接口地址",
+      aiBaseUrlPlaceholder: "https://api.deepseek.com",
+      aiBaseUrlHelp:
+        "默认 https://api.deepseek.com。支持 OpenAI 兼容接口，保存自定义地址时 Chrome 会请求该域名的访问权限。",
+      testAiConnection: "测试连接",
+      testingConnection: "正在测试连接…",
+      testSuccess: ({ model }) => `连接成功（模型：${model}）`,
+      missingAiKey: "请先填写 AI 密钥。",
+      invalidAiKey: "密钥无效。",
+      modelNotFound: "模型名称不存在，请检查。",
+      testFailed: "连接失败。",
       saveSettings: "保存设置",
       localRemix: "本地改造",
       customizationTitle: "想使用其他 AI 模型？",
@@ -132,6 +183,10 @@ const YTD_OPTIONS = (() => {
       addSupadataKey: "请添加 Supadata API 密钥。",
       addDeepseekKey: "请添加 DeepSeek API 密钥。",
       saved: "已保存。请重新打开 YouTube Digest 以使用这些设置。",
+      savedMissingAiKey:
+        "已保存。未配置 AI 密钥时，概览、翻译和对话不可用。",
+      permissionDenied:
+        "未授予该接口地址的访问权限，已保留原地址。",
       saveFailed: "无法保存设置，请重试。",
       copying: "正在复制…",
       promptCopied: "已复制编辑后的提示词。",
@@ -353,7 +408,16 @@ const YTD_OPTIONS = (() => {
     );
     const form = doc.getElementById("settingsForm");
     const aiApiKeyInput = doc.getElementById("aiApiKey");
+    const aiModelInput = doc.getElementById("aiModel");
+    const aiBaseUrlInput = doc.getElementById("aiBaseUrl");
     const supadataApiKeyInput = doc.getElementById("supadataApiKey");
+    const transcriptSourceInputs = [
+      ...doc.querySelectorAll('input[name="transcriptSource"]'),
+    ];
+    const testAiConnectionBtn = doc.getElementById("testAiConnectionBtn");
+    const testAiConnectionStatus = doc.getElementById(
+      "testAiConnectionStatus",
+    );
     const customizationPrompt = doc.getElementById("customizationPrompt");
     const copyCustomizationPromptBtn = doc.getElementById(
       "copyCustomizationPromptBtn",
@@ -364,7 +428,73 @@ const YTD_OPTIONS = (() => {
     const languageButtons = [...doc.querySelectorAll("[data-language]")];
     const statusStates = new Map();
     const promptDrafts = createPromptDrafts();
+    const allowedAiOrigins = new Set([
+      "https://api.deepseek.com",
+      "https://api.supadata.ai",
+      "https://www.youtube.com",
+    ]);
     let currentLanguage = "zh-CN";
+    let lastSavedBaseUrl = settingsApi.DEFAULTS.aiBaseUrl;
+
+    function setRawStatus(element, text) {
+      statusStates.delete(element);
+      element.textContent = text;
+    }
+
+    function getTranscriptSource() {
+      const checked = transcriptSourceInputs.find((input) => input.checked);
+      return checked ? checked.value : settingsApi.DEFAULTS.transcriptSource;
+    }
+
+    function setTranscriptSource(value) {
+      for (const input of transcriptSourceInputs) {
+        input.checked = input.value === value;
+      }
+    }
+
+    function collectSettings() {
+      return settingsApi.normalize({
+        provider: "deepseek",
+        aiApiKey: aiApiKeyInput.value,
+        aiBaseUrl: aiBaseUrlInput.value,
+        aiModel: aiModelInput.value,
+        supadataApiKey: supadataApiKeyInput.value,
+        transcriptSource: getTranscriptSource(),
+      });
+    }
+
+    async function requestBaseUrlPermission(baseUrl) {
+      let origin;
+      try {
+        origin = new URL(baseUrl).origin;
+      } catch (_error) {
+        return false;
+      }
+      if (allowedAiOrigins.has(origin)) return true;
+      const permissions = root.chrome?.permissions;
+      // Preview pages have no chrome.permissions; nothing to request there.
+      if (!permissions?.request) return true;
+      try {
+        return Boolean(await permissions.request({ origins: [`${origin}/*`] }));
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    async function persistSettings({ requestPermissions = false } = {}) {
+      const settings = collectSettings();
+      if (requestPermissions) {
+        const granted = await requestBaseUrlPermission(settings.aiBaseUrl);
+        if (!granted) {
+          aiBaseUrlInput.value = lastSavedBaseUrl;
+          setStatus(saveStatus, "permissionDenied");
+          return { ok: false, settings };
+        }
+      }
+      await storage.set({ [settingsApi.STORAGE_KEY]: settings });
+      lastSavedBaseUrl = settings.aiBaseUrl;
+      return { ok: true, settings };
+    }
 
     function renderStatus(element) {
       const state = statusStates.get(element);
@@ -431,7 +561,11 @@ const YTD_OPTIONS = (() => {
         const settings = migration.settings;
 
         aiApiKeyInput.value = settings.aiApiKey;
+        aiModelInput.value = settings.aiModel;
+        aiBaseUrlInput.value = settings.aiBaseUrl;
         supadataApiKeyInput.value = settings.supadataApiKey;
+        setTranscriptSource(settings.transcriptSource);
+        lastSavedBaseUrl = settings.aiBaseUrl;
         if (migration.migrated) {
           await storage.set({ [settingsApi.STORAGE_KEY]: settings });
           setStatus(saveStatus, "migrationWarning");
@@ -454,25 +588,67 @@ const YTD_OPTIONS = (() => {
       event.preventDefault();
       setStatus(saveStatus, "saving");
 
-      const settings = settingsApi.normalize({
-        aiApiKey: aiApiKeyInput.value,
-        supadataApiKey: supadataApiKeyInput.value,
-      });
-
-      if (!settings.supadataApiKey) {
-        setStatus(saveStatus, "addSupadataKey");
-        return;
-      }
-      if (!settings.aiApiKey) {
-        setStatus(saveStatus, "addDeepseekKey");
-        return;
-      }
-
       try {
-        await storage.set({ [settingsApi.STORAGE_KEY]: settings });
-        setStatus(saveStatus, "saved");
+        const result = await persistSettings({ requestPermissions: true });
+        if (!result.ok) return;
+        setStatus(
+          saveStatus,
+          result.settings.aiApiKey ? "saved" : "savedMissingAiKey",
+        );
       } catch (_error) {
         setStatus(saveStatus, "saveFailed");
+      }
+    }
+
+    async function testAiConnection() {
+      testAiConnectionBtn.disabled = true;
+      setStatus(testAiConnectionStatus, "testingConnection");
+      try {
+        const result = await persistSettings({ requestPermissions: true });
+        if (!result.ok) {
+          setStatus(testAiConnectionStatus, "permissionDenied");
+          return;
+        }
+        const runtime = root.chrome?.runtime;
+        if (!runtime?.sendMessage) {
+          setStatus(testAiConnectionStatus, "testFailed");
+          return;
+        }
+        const response = await runtime.sendMessage({
+          action: "testAiConnection",
+        });
+        if (response?.success) {
+          setStatus(testAiConnectionStatus, "testSuccess", {
+            model: response.model || result.settings.aiModel,
+          });
+          return;
+        }
+        const errorCode = response?.error;
+        if (errorCode === "NO_AI_KEY") {
+          setStatus(testAiConnectionStatus, "missingAiKey");
+        } else if (errorCode === "INVALID_AI_KEY") {
+          setStatus(testAiConnectionStatus, "invalidAiKey");
+        } else if (errorCode === "MODEL_NOT_FOUND") {
+          if (
+            typeof response?.message === "string" &&
+            response.message.trim()
+          ) {
+            setRawStatus(testAiConnectionStatus, response.message.trim());
+          } else {
+            setStatus(testAiConnectionStatus, "modelNotFound");
+          }
+        } else if (
+          typeof response?.message === "string" &&
+          response.message.trim()
+        ) {
+          setRawStatus(testAiConnectionStatus, response.message.trim());
+        } else {
+          setStatus(testAiConnectionStatus, "testFailed");
+        }
+      } catch (_error) {
+        setStatus(testAiConnectionStatus, "testFailed");
+      } finally {
+        testAiConnectionBtn.disabled = false;
       }
     }
 
@@ -514,6 +690,7 @@ const YTD_OPTIONS = (() => {
     }
 
     form.addEventListener("submit", saveSettings);
+    testAiConnectionBtn.addEventListener("click", testAiConnection);
     copyCustomizationPromptBtn.addEventListener(
       "click",
       copyCustomizationPrompt,
