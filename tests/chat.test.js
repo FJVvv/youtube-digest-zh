@@ -180,6 +180,151 @@ test("chat answers use the configured model and include the transcript", async (
   );
 });
 
+test("chat system prompt carries the duration, URL and prior summary", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    fetchImpl: promptFileFetch(async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "这是回答。" } }],
+        }),
+      };
+    }),
+  });
+
+  const result = await helpers.handleChatAsk({
+    transcriptText: "[0:00] Hello there",
+    videoTitle: "Test Video",
+    channelName: "Test Channel",
+    videoDescription: "A description.",
+    videoDuration: 754,
+    videoUrl: "https://www.youtube.com/watch?v=abc123def45",
+    analysisSummary: "这段视频讲解了如何处理幂等重试。",
+    messages: [],
+    question: "重点是什么？",
+  });
+
+  assert.equal(result.success, true);
+  const systemMessage = requests[0].messages[0];
+  assert.equal(systemMessage.role, "system");
+  assert.match(systemMessage.content, /12:34/);
+  assert.match(systemMessage.content, /https:\/\/www\.youtube\.com\/watch\?v=abc123def45/);
+  assert.match(systemMessage.content, /这段视频讲解了如何处理幂等重试。/);
+  assert.equal(helpers.formatVideoDurationForChat(754), "12:34");
+  assert.equal(helpers.formatVideoDurationForChat(""), "Unknown");
+});
+
+test("chat does not repeat the pending question when history already ends with it", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    fetchImpl: promptFileFetch(async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "这是回答。" } }],
+        }),
+      };
+    }),
+  });
+
+  const question = "这视频讲什么";
+  const result = await helpers.handleChatAsk({
+    transcriptText: "[0:00] Hello there",
+    videoTitle: "Test Video",
+    channelName: "Test Channel",
+    videoDescription: "",
+    messages: [
+      { role: "user", content: "第一个问题" },
+      { role: "assistant", content: "第一个回答" },
+      { role: "user", content: question },
+    ],
+    question,
+  });
+
+  assert.equal(result.success, true);
+  const nonSystemMessages = requests[0].messages.filter(
+    (message) => message.role !== "system",
+  );
+  assert.deepEqual(nonSystemMessages, [
+    { role: "user", content: "第一个问题" },
+    { role: "assistant", content: "第一个回答" },
+    { role: "user", content: question },
+  ]);
+  assert.equal(
+    nonSystemMessages.filter((message) => message.content === question).length,
+    1,
+  );
+});
+
+test("chat truncates an oversized transcript with the explicit marker", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    fetchImpl: promptFileFetch(async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "这是回答。" } }],
+        }),
+      };
+    }),
+  });
+
+  const hugeTranscript = `${"A".repeat(50_000)}${"B".repeat(50_000)}`;
+  const result = await helpers.handleChatAsk({
+    transcriptText: hugeTranscript,
+    videoTitle: "Test Video",
+    channelName: "Test Channel",
+    videoDescription: "",
+    messages: [],
+    question: "讲了什么？",
+  });
+
+  assert.equal(result.success, true);
+  const systemContent = requests[0].messages[0].content;
+  assert.match(systemContent, /字幕中间部分因长度限制已省略/);
+  assert.match(systemContent, /未覆盖的内容不要猜测/);
+  assert.ok(
+    systemContent.length < hugeTranscript.length,
+    "oversized transcript should be shortened",
+  );
+});
+
+test("chat requests use the 4096 max_tokens budget and 0.6 temperature", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    fetchImpl: promptFileFetch(async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "这是回答。" } }],
+        }),
+      };
+    }),
+  });
+
+  const result = await helpers.handleChatAsk({
+    transcriptText: "[0:00] Hello there",
+    videoTitle: "Test Video",
+    channelName: "Test Channel",
+    videoDescription: "",
+    messages: [],
+    question: "讲了什么？",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(requests[0].max_tokens, 4096);
+  assert.equal(requests[0].temperature, 0.6);
+});
+
 test("chat reports missing key, empty question, and missing transcript", async () => {
   const noKey = loadBackgroundHelpers({
     settings: {

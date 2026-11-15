@@ -16,6 +16,13 @@ YouTube Digest is a bring-your-own-key project installed locally from GitHub. It
 
 ![YouTube Digest demo](YouTube%20Digest%20demo.png)
 
+## New in v1.4.0
+
+- Deeper video chat: answers open with a one-line verdict, then develop the point with [M:SS] evidence from the transcript. Background knowledge is labeled as background, and the model says so when the captions do not cover something. It receives the video duration, URL, description, any existing overview, and up to 60,000 characters of transcript, and can use up to 4,096 output tokens.
+- A thinking animation shows while the AI works, so the panel never looks stuck.
+- Conversations are saved locally per video. Reopen a video and its chat is restored; a new video starts a fresh conversation. **History** in the chat tab opens any earlier video's conversation with a link to that video, deletes a conversation, and exports one with its link.
+- `deepseek-v4-flash` stays the default for fast answers. For deeper analysis, set **Model name** to `deepseek-v4-pro`.
+
 ## New in v1.3.0
 
 - Read a video's own YouTube captions for free, with no third-party transcript service and no API key. Supadata stays available as an optional fallback.
@@ -116,7 +123,7 @@ Keys and settings are stored in Chrome's local extension storage on your device.
 4. Open **Overview** when you want AI-generated chapters and key quotes.
 5. Select transcript text when you want an AI explanation.
 6. Save a note from the player or a key quote, then revisit it from **Notes**.
-7. Open **Chat** to ask your own question about the video. The tab only references the video until you type a prompt and send it. **Export chat** downloads the whole conversation as a text file.
+7. Open **Chat** to ask your own question about the video. The tab only references the video until you type a prompt and send it. Conversations are saved on this device per video: reopen the video to continue, or use **History** to return to an earlier conversation. **Export chat** downloads the whole conversation as a text file with its video link.
 8. Paste a video URL into the header field and press Enter to jump to that video.
 
 ## What works today

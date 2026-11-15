@@ -31,6 +31,28 @@ let youtubeTabId = null; // Store the YouTube tab ID for reliable messaging
 let errorAction = null;
 let chatMessages = []; // { role: "user" | "assistant", content: string }
 let isChatSending = false;
+// The displayed conversation can belong to an earlier video opened from the
+// history list, so its identity is tracked separately from the video on screen.
+let chatVideoId = null;
+let chatVideoUrl = null;
+let chatVideoTitle = "";
+let chatVideoChannel = "";
+let chatVideoDuration = 0;
+let chatContextTranscript = null;
+let chatContextSource = null;
+// True while the panel shows a conversation opened from the history list for a
+// different video; the composer then relies on the digest cache for context.
+let chatConversationFromHistory = false;
+let chatHistoryIndex = [];
+let chatHistoryVisible = false;
+let chatThinkingTimer = null;
+
+// --- Chat persistence limits ---
+const CHAT_INDEX_KEY = "ytd_chat_index";
+const CHAT_KEY_PREFIX = "ytd_chat_";
+const CHAT_MAX_CONVERSATIONS = 50;
+const CHAT_MAX_MESSAGES = 100;
+const CHAT_MAX_MESSAGE_CHARS = 12000;
 
 // --- Translation state ---
 // The universal language control supports original content, Chinese, and an
@@ -471,6 +493,17 @@ function setupEventListeners() {
   document
     .getElementById("chatExportBtn")
     ?.addEventListener("click", exportChat);
+  document
+    .getElementById("chatHistoryBtn")
+    ?.addEventListener("click", () =>
+      setChatHistoryVisible(!chatHistoryVisible),
+    );
+  document
+    .getElementById("chatHistoryList")
+    ?.addEventListener("click", handleChatHistoryClick);
+  document
+    .getElementById("chatSuggestions")
+    ?.addEventListener("click", handleChatSuggestionClick);
 }
 
 function setNotesFilter(showAll) {
@@ -592,9 +625,9 @@ async function startDigest(videoId, videoUrl) {
     if (transcriptScrollObserver) transcriptScrollObserver.disconnect();
     transcriptScrollObserver = null;
     resetTranscriptSearch();
-    // Chat history belongs to one video: drop it before either branch (cache
-    // hit or fresh fetch) fills in the new video.
-    resetChat();
+    // Chat history belongs to one video: load the saved conversation before
+    // either branch (cache hit or fresh fetch) fills in the new video.
+    await openChatConversation(videoId, videoUrl);
     lastTranscriptScrollTop = 0;
     pendingTranscriptViewState = await loadTranscriptViewState(videoId);
     // An unseen video always starts in Original, so opening it never spends
@@ -653,7 +686,8 @@ async function startDigest(videoId, videoUrl) {
     showState("results");
     document.getElementById("tabsNav").style.display = "flex";
     restorePendingTranscriptViewState(videoId);
-    renderChatReference();
+    await refreshChatContext();
+    renderChatPanel();
 
     // Load notes for this video
     loadNotes(videoId);
@@ -716,7 +750,8 @@ async function startDigest(videoId, videoUrl) {
   showState("results");
   document.getElementById("tabsNav").style.display = "flex";
   restorePendingTranscriptViewState(videoId);
-  renderChatReference();
+  await refreshChatContext();
+  renderChatPanel();
 
   // Load notes for this video
   loadNotes(videoId);
@@ -1609,11 +1644,238 @@ async function triggerAnalysis() {
 // ============================================================
 
 /**
+ * Storage key for one video's saved conversation.
+ */
+function chatStorageKey(videoId) {
+  return `${CHAT_KEY_PREFIX}${String(videoId || "")}`;
+}
+
+/**
+ * Builds the record persisted for one video. Long conversations are clipped
+ * from the front so the newest turns survive the per-video caps.
+ */
+function buildChatRecord({
+  videoId,
+  videoUrl,
+  videoTitle,
+  channelName,
+  videoDuration,
+  messages,
+  now,
+} = {}) {
+  const clipped = [];
+  (Array.isArray(messages) ? messages : []).forEach((message) => {
+    if (!message || typeof message !== "object") return;
+    const role = message.role === "assistant" ? "assistant" : "user";
+    const content = String(
+      message.content == null ? "" : message.content,
+    ).slice(0, CHAT_MAX_MESSAGE_CHARS);
+    clipped.push({ role, content });
+  });
+  return {
+    videoId: String(videoId || ""),
+    videoUrl: String(videoUrl || ""),
+    videoTitle: String(videoTitle || ""),
+    channelName: String(channelName || ""),
+    videoDuration: Number(videoDuration) || 0,
+    updatedAt: Number(now) || Date.now(),
+    messages: clipped.slice(-CHAT_MAX_MESSAGES),
+  };
+}
+
+/**
+ * Sorts the history index newest first and returns the ids that no longer
+ * fit, so their stored records can be deleted from storage as well.
+ */
+function pruneChatIndex(index, maxEntries) {
+  const limit = Math.max(0, Number(maxEntries) || 0);
+  const entries = (Array.isArray(index) ? index : [])
+    .filter((entry) => entry && entry.videoId)
+    .map((entry) => ({
+      videoId: entry.videoId,
+      videoUrl: String(entry.videoUrl || ""),
+      videoTitle: String(entry.videoTitle || ""),
+      channelName: String(entry.channelName || ""),
+      videoDuration: Number(entry.videoDuration) || 0,
+      updatedAt: Number(entry.updatedAt) || 0,
+      messageCount: Number(entry.messageCount) || 0,
+    }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  return {
+    index: entries.slice(0, limit),
+    removedVideoIds: entries.slice(limit).map((entry) => entry.videoId),
+  };
+}
+
+/**
+ * Export text for one saved conversation. The video link makes exported
+ * notes useful outside the extension.
+ */
+function formatChatExport(record) {
+  const source = record && typeof record === "object" ? record : {};
+  const lines = [
+    "YouTube Digest 对话",
+    `视频：${source.videoTitle || "未知"}`,
+    `链接：${source.videoUrl || canonicalVideoUrl(source.videoId)}`,
+    `频道：${source.channelName || "未知"}`,
+    "",
+  ];
+  (Array.isArray(source.messages) ? source.messages : []).forEach((message) => {
+    if (!message) return;
+    const role = message.role === "assistant" ? "AI" : "我";
+    lines.push(`[${role}] ${message.content}`);
+    lines.push("");
+  });
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function canonicalVideoUrl(videoId) {
+  return videoId
+    ? `https://www.youtube.com/watch?v=${encodeURIComponent(String(videoId))}`
+    : "";
+}
+
+function formatChatDuration(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!total) return "";
+  const rest = String(total % 60).padStart(2, "0");
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes}:${rest}`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}:${String(minutes % 60).padStart(2, "0")}:${rest}`;
+}
+
+function formatChatDate(timestamp) {
+  const date = new Date(Number(timestamp) || 0);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate(),
+  )} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function chatTranscriptSourceLabel(source) {
+  if (source === "youtube") return "YouTube 自带";
+  if (source === "supadata") return "Supadata";
+  return "";
+}
+
+async function loadChatIndex() {
+  try {
+    const result = await chrome.storage.local.get(CHAT_INDEX_KEY);
+    const index = result ? result[CHAT_INDEX_KEY] : null;
+    return Array.isArray(index) ? index : [];
+  } catch (error) {
+    console.error("[YouTube Digest Panel] Chat index load error:", error);
+    return [];
+  }
+}
+
+async function loadChatRecord(videoId) {
+  if (!videoId) return null;
+  try {
+    const key = chatStorageKey(videoId);
+    const result = await chrome.storage.local.get(key);
+    const record = result ? result[key] : null;
+    if (!record || !Array.isArray(record.messages)) return null;
+    return record;
+  } catch (error) {
+    console.error("[YouTube Digest Panel] Chat record load error:", error);
+    return null;
+  }
+}
+
+async function saveChatRecord(record) {
+  if (!record || !record.videoId) return;
+  const key = chatStorageKey(record.videoId);
+  try {
+    await chrome.storage.local.set({ [key]: record });
+  } catch (error) {
+    // Quota errors are the common failure here: free the oldest conversation
+    // and retry once so the newest turn is still kept.
+    console.error("[YouTube Digest Panel] Chat save failed, pruning:", error);
+    try {
+      const { index, removedVideoIds } = pruneChatIndex(
+        await loadChatIndex(),
+        CHAT_MAX_CONVERSATIONS - 1,
+      );
+      if (removedVideoIds.length) {
+        await chrome.storage.local.remove(removedVideoIds.map(chatStorageKey));
+      }
+      await chrome.storage.local.set({ [CHAT_INDEX_KEY]: index });
+      await chrome.storage.local.set({ [key]: record });
+    } catch (retryError) {
+      console.error(
+        "[YouTube Digest Panel] Chat save retry failed:",
+        retryError,
+      );
+    }
+  }
+}
+
+async function updateChatIndex(record) {
+  const stored = await loadChatIndex();
+  const entry = {
+    videoId: record.videoId,
+    videoUrl: record.videoUrl,
+    videoTitle: record.videoTitle,
+    channelName: record.channelName,
+    videoDuration: record.videoDuration,
+    updatedAt: record.updatedAt,
+    messageCount: record.messages.length,
+  };
+  const merged = [
+    entry,
+    ...stored.filter((item) => item && item.videoId !== record.videoId),
+  ];
+  const { index, removedVideoIds } = pruneChatIndex(
+    merged,
+    CHAT_MAX_CONVERSATIONS,
+  );
+  chatHistoryIndex = index;
+  if (removedVideoIds.length) {
+    try {
+      await chrome.storage.local.remove(removedVideoIds.map(chatStorageKey));
+    } catch (error) {
+      console.error("[YouTube Digest Panel] Chat eviction error:", error);
+    }
+  }
+  try {
+    await chrome.storage.local.set({ [CHAT_INDEX_KEY]: index });
+  } catch (error) {
+    console.error("[YouTube Digest Panel] Chat index save error:", error);
+  }
+}
+
+/**
+ * Saves the conversation shown right now. Only called after a successful AI
+ * answer, so a failed turn never overwrites the last good record.
+ */
+async function saveChatConversation() {
+  if (!chatVideoId || !chatMessages.length) return;
+  const record = buildChatRecord({
+    videoId: chatVideoId,
+    videoUrl: chatVideoUrl || canonicalVideoUrl(chatVideoId),
+    videoTitle: chatVideoTitle || currentVideoTitle,
+    channelName: chatVideoChannel || currentChannelName,
+    videoDuration: chatVideoDuration,
+    messages: chatMessages,
+    now: Date.now(),
+  });
+  const trimmed = record.messages.length !== chatMessages.length;
+  chatMessages = record.messages;
+  await saveChatRecord(record);
+  await updateChatIndex(record);
+  if (trimmed) renderChatMessages();
+  updateChatExportButton();
+}
+
+/**
  * Chat answers are always grounded in the timestamped transcript, so nothing
  * can be asked before it exists.
  */
 function chatHasTranscript() {
-  return Boolean(currentTranscriptTimestamped);
+  return Boolean(chatContextTranscript);
 }
 
 /**
@@ -1638,13 +1900,40 @@ function chatErrorMessage(result) {
 function renderChatReference() {
   const reference = document.getElementById("chatReference");
   const card = document.getElementById("chatReferenceCard");
+  const link = document.getElementById("chatReferenceLink");
+  const meta = document.getElementById("chatReferenceMeta");
   if (!reference) return;
 
   const hasTranscript = chatHasTranscript();
+  const title = chatVideoTitle || currentVideoTitle || "当前视频";
   reference.textContent = hasTranscript
-    ? `已引用本视频：${currentVideoTitle || "当前视频"}`
+    ? `已引用视频：${title}`
     : "字幕不可用，无法对话";
   card?.classList.toggle("chat-reference-unavailable", !hasTranscript);
+
+  if (link) {
+    const url = chatVideoUrl || canonicalVideoUrl(chatVideoId || currentVideoId);
+    if (url) {
+      link.href = url;
+      link.hidden = false;
+    } else {
+      link.hidden = true;
+      link.removeAttribute("href");
+    }
+  }
+
+  if (meta) {
+    const parts = [];
+    if (hasTranscript && chatContextTranscript) {
+      parts.push(`字幕 ${chatContextTranscript.length} 字`);
+    }
+    const duration = formatChatDuration(chatVideoDuration);
+    if (duration) parts.push(`时长 ${duration}`);
+    const sourceLabel = chatTranscriptSourceLabel(chatContextSource);
+    if (hasTranscript && sourceLabel) parts.push(`来源：${sourceLabel}`);
+    meta.textContent = parts.join(" · ");
+    meta.hidden = parts.length === 0;
+  }
 }
 
 function updateChatExportButton() {
@@ -1654,7 +1943,28 @@ function updateChatExportButton() {
 
 function updateChatComposerState() {
   const sendBtn = document.getElementById("chatSendBtn");
-  if (sendBtn) sendBtn.disabled = isChatSending;
+  const input = document.getElementById("chatInput");
+  const canSend = chatHasTranscript();
+
+  if (sendBtn) {
+    sendBtn.disabled = isChatSending || !canSend;
+    sendBtn.textContent = isChatSending ? "思考中…" : "发送";
+  }
+  if (input) input.disabled = !canSend;
+
+  const note = document.getElementById("chatContextNote");
+  if (note) {
+    const otherVideo =
+      chatConversationFromHistory && chatVideoId !== currentVideoId;
+    let text = "";
+    if (!canSend) {
+      text = otherVideo
+        ? "该字幕缓存已过期，打开该视频后可继续提问"
+        : "字幕尚未加载，无法对话";
+    }
+    note.textContent = text;
+    note.hidden = !text;
+  }
 }
 
 function scrollChatToBottom() {
@@ -1674,9 +1984,11 @@ function clearChatError() {
  * chatMessages: they are never exported and never sent back as context.
  */
 function showChatError(text) {
+  clearChatThinking();
   clearChatError();
   const container = document.getElementById("chatMessages");
   if (!container) return;
+  container.classList.remove("chat-messages-empty");
   const empty = document.getElementById("chatEmpty");
   if (empty) empty.style.display = "none";
   const error = document.createElement("div");
@@ -1697,7 +2009,16 @@ function renderChatMessages() {
   const empty = document.getElementById("chatEmpty");
   if (!container) return;
 
+  // The thinking bubble lives inside this container in the markup; keep it
+  // while the message bubbles are replaced.
+  const thinking = document.getElementById("chatThinking");
   container.textContent = "";
+  if (thinking) {
+    thinking.hidden = true;
+    container.appendChild(thinking);
+  }
+  container.classList.toggle("chat-messages-empty", chatMessages.length === 0);
+
   chatMessages.forEach((message) => {
     const isAssistant = message.role === "assistant";
     const bubble = document.createElement("div");
@@ -1730,21 +2051,304 @@ function renderChatPanel() {
   renderChatMessages();
   updateChatComposerState();
   scrollChatToBottom();
+  if (chatHistoryVisible) void renderChatHistory();
 }
 
 /**
- * Drops the conversation when the video changes. Called from startDigest so
- * both the cache-hit and the fresh-fetch paths clear it.
+ * Loads the saved conversation for a video (empty when none exists). Called by
+ * startDigest on every video change; storage failures must never block the
+ * transcript pipeline, so everything here is guarded.
  */
-function resetChat() {
-  chatMessages = [];
+async function openChatConversation(videoId, videoUrl, fromHistory = false) {
+  clearChatThinking();
   isChatSending = false;
+  chatMessages = [];
+  chatVideoId = videoId || null;
+  chatVideoUrl = videoUrl || canonicalVideoUrl(videoId);
+  chatVideoTitle = currentVideoTitle || "";
+  chatVideoChannel = currentChannelName || "";
+  chatVideoDuration = currentVideoDuration || 0;
+  chatContextTranscript = null;
+  chatContextSource = null;
+  chatConversationFromHistory = Boolean(fromHistory);
   clearChatError();
   const input = document.getElementById("chatInput");
   if (input) input.value = "";
-  renderChatReference();
-  renderChatMessages();
+
+  try {
+    const record = await loadChatRecord(videoId);
+    if (record) {
+      chatMessages = record.messages.map((message) => ({
+        role: message.role === "assistant" ? "assistant" : "user",
+        content: String(message.content || ""),
+      }));
+      chatVideoId = record.videoId || chatVideoId;
+      chatVideoUrl = record.videoUrl || chatVideoUrl;
+      chatVideoTitle = record.videoTitle || chatVideoTitle;
+      chatVideoChannel = record.channelName || chatVideoChannel;
+      chatVideoDuration = Number(record.videoDuration) || chatVideoDuration;
+    }
+  } catch (error) {
+    // A broken stored record must never block the transcript pipeline.
+    console.error("[YouTube Digest Panel] Chat history load error:", error);
+  }
+
+  await refreshChatContext();
+  renderChatPanel();
+}
+
+/**
+ * Keeps the chat grounded in a transcript it can actually see. For the video
+ * on screen that is the loaded transcript; for a video opened from history it
+ * comes from the digest cache.
+ */
+async function refreshChatContext() {
+  if (chatVideoId && chatVideoId === currentVideoId) {
+    chatContextTranscript = currentTranscriptTimestamped || null;
+    chatContextSource = currentTranscriptSource || null;
+    chatVideoTitle = currentVideoTitle || chatVideoTitle;
+    chatVideoChannel = currentChannelName || chatVideoChannel;
+    chatVideoUrl = currentVideoUrl || chatVideoUrl;
+    chatVideoDuration = currentVideoDuration || chatVideoDuration;
+  } else if (chatVideoId) {
+    chatContextTranscript = null;
+    chatContextSource = null;
+    try {
+      const cached = await loadFromCache(chatVideoId);
+      if (cached && cached.transcriptTimestamped) {
+        chatContextTranscript = cached.transcriptTimestamped;
+        chatContextSource = cached.transcriptSource || null;
+      }
+    } catch (error) {
+      console.error("[YouTube Digest Panel] Chat context load error:", error);
+    }
+  }
   updateChatComposerState();
+  renderChatReference();
+  updateChatExportButton();
+}
+
+/**
+ * The thinking bubble is transient UI only: it never enters chatMessages, so
+ * it is never saved, exported or sent to the model.
+ */
+function clearChatThinking() {
+  if (chatThinkingTimer) {
+    clearTimeout(chatThinkingTimer);
+    chatThinkingTimer = null;
+  }
+  const bubble = document.getElementById("chatThinking");
+  if (!bubble) return;
+  if (bubble.dataset.dynamic === "true") bubble.remove();
+  else bubble.hidden = true;
+}
+
+function showChatThinking() {
+  const container = document.getElementById("chatMessages");
+  if (!container) return;
+  clearChatThinking();
+
+  let bubble = document.getElementById("chatThinking");
+  if (!bubble) {
+    // Defensive fallback: the panel ships a static bubble, but a missing or
+    // rewritten DOM must still show that an answer is pending.
+    bubble = document.createElement("div");
+    bubble.id = "chatThinking";
+    bubble.className = "chat-message chat-message-assistant chat-thinking";
+    bubble.dataset.dynamic = "true";
+    bubble.setAttribute("role", "status");
+
+    const label = document.createElement("div");
+    label.className = "chat-message-label";
+    label.textContent = "AI";
+
+    const body = document.createElement("div");
+    body.className = "chat-message-text chat-thinking-body";
+    const dots = document.createElement("span");
+    dots.className = "chat-thinking-dots";
+    dots.setAttribute("aria-hidden", "true");
+    for (let index = 0; index < 3; index += 1) {
+      dots.appendChild(document.createElement("span"));
+    }
+    const text = document.createElement("span");
+    text.className = "chat-thinking-text";
+    text.id = "chatThinkingText";
+    text.textContent = "正在思考…";
+    body.append(dots, text);
+    bubble.append(label, body);
+  }
+
+  // Always move the bubble to the newest position and reset its copy.
+  container.appendChild(bubble);
+  bubble.hidden = false;
+  const text = bubble.querySelector(".chat-thinking-text");
+  if (text) text.textContent = "正在思考…";
+
+  const empty = document.getElementById("chatEmpty");
+  if (empty) empty.style.display = "none";
+  chatThinkingTimer = setTimeout(() => {
+    if (!text || !text.isConnected) return;
+    text.textContent = "仍在思考，长视频可能需要更久…";
+  }, 8000);
+  scrollChatToBottom();
+}
+
+function setChatHistoryVisible(visible) {
+  chatHistoryVisible = Boolean(visible);
+  const panel = document.getElementById("chatHistoryPanel");
+  if (panel) panel.hidden = !chatHistoryVisible;
+  const button = document.getElementById("chatHistoryBtn");
+  if (button) {
+    button.classList.toggle("active", chatHistoryVisible);
+    button.setAttribute("aria-expanded", String(chatHistoryVisible));
+  }
+  if (chatHistoryVisible) void renderChatHistory();
+}
+
+/**
+ * Renders the saved-conversation list. Rows are built with textContent because
+ * titles come from remote video metadata.
+ */
+async function renderChatHistory() {
+  const list = document.getElementById("chatHistoryList");
+  const empty = document.getElementById("chatHistoryEmpty");
+  if (!list) return;
+
+  const index = await loadChatIndex();
+  chatHistoryIndex = index;
+  list.textContent = "";
+  list.hidden = index.length === 0;
+  if (empty) empty.hidden = index.length > 0;
+
+  index.forEach((entry) => {
+    const isCurrent = entry.videoId === chatVideoId;
+    const row = document.createElement("div");
+    row.className = "chat-history-item";
+    if (isCurrent) row.classList.add("chat-history-current");
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "chat-history-open";
+    open.dataset.videoId = entry.videoId;
+    const title = document.createElement("span");
+    title.className = "chat-history-item-title";
+    title.textContent = entry.videoTitle || entry.videoUrl || entry.videoId;
+    const meta = document.createElement("span");
+    meta.className = "chat-history-item-meta";
+    meta.textContent = [
+      entry.channelName || "未知频道",
+      formatChatDate(entry.updatedAt),
+      `${Number(entry.messageCount) || 0} 条消息`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    open.append(title, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "chat-history-actions";
+    if (isCurrent) {
+      const badge = document.createElement("span");
+      badge.className = "chat-history-badge";
+      badge.textContent = "当前";
+      actions.appendChild(badge);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "chat-history-delete";
+    remove.dataset.videoId = entry.videoId;
+    remove.dataset.videoTitle = entry.videoTitle || "";
+    remove.textContent = "删除";
+    remove.setAttribute(
+      "aria-label",
+      `删除「${entry.videoTitle || entry.videoId}」的对话记录`,
+    );
+    actions.appendChild(remove);
+
+    row.append(open, actions);
+    list.appendChild(row);
+  });
+}
+
+async function openHistoryConversation(videoId) {
+  if (!videoId) return;
+  if (videoId === chatVideoId) {
+    setChatHistoryVisible(false);
+    return;
+  }
+  setChatHistoryVisible(false);
+  const record = await loadChatRecord(videoId);
+  if (!record) {
+    await renderChatHistory();
+    return;
+  }
+  await openChatConversation(
+    record.videoId || videoId,
+    record.videoUrl || canonicalVideoUrl(videoId),
+    true,
+  );
+  renderChatPanel();
+}
+
+async function deleteChatConversation(videoId) {
+  if (!videoId) return;
+  try {
+    await chrome.storage.local.remove(chatStorageKey(videoId));
+    const index = (await loadChatIndex()).filter(
+      (entry) => entry && entry.videoId !== videoId,
+    );
+    chatHistoryIndex = index;
+    await chrome.storage.local.set({ [CHAT_INDEX_KEY]: index });
+  } catch (error) {
+    console.error("[YouTube Digest Panel] Chat delete error:", error);
+  }
+  if (videoId === chatVideoId) {
+    // The cleared conversation must not be written back on the next answer.
+    clearChatThinking();
+    chatMessages = [];
+    clearChatError();
+    renderChatMessages();
+  }
+  await renderChatHistory();
+}
+
+function handleChatHistoryClick(event) {
+  const deleteBtn = event.target.closest(".chat-history-delete");
+  if (deleteBtn) {
+    const videoId = deleteBtn.dataset.videoId;
+    const title = deleteBtn.dataset.videoTitle || "该视频";
+    if (!confirm(`删除「${title}」的对话记录？`)) return;
+    void deleteChatConversation(videoId);
+    return;
+  }
+  const openBtn = event.target.closest(".chat-history-open");
+  if (openBtn) void openHistoryConversation(openBtn.dataset.videoId);
+}
+
+/**
+ * Suggestions only fill the composer; they never send on their own.
+ */
+function handleChatSuggestionClick(event) {
+  const button = event.target.closest(".chat-suggestion");
+  if (!button) return;
+  const input = document.getElementById("chatInput");
+  if (!input) return;
+  input.value = button.dataset.prompt || button.textContent || "";
+  input.focus();
+}
+
+/**
+ * A compact summary of the existing analysis (chapter titles) so the chat can
+ * reuse it instead of paying for another analysis request.
+ */
+function chatAnalysisSummary() {
+  const analysis = chatVideoId === currentVideoId ? currentAnalysis : null;
+  if (!analysis || typeof analysis !== "object") return "";
+  const chapters = Array.isArray(analysis.chapters) ? analysis.chapters : [];
+  const titles = chapters
+    .map((chapter) => String((chapter && chapter.title) || "").trim())
+    .filter(Boolean)
+    .slice(0, 10);
+  return titles.join("；").slice(0, 2000);
 }
 
 function handleChatInputKeydown(event) {
@@ -1763,7 +2367,13 @@ async function sendChatMessage() {
   const question = input.value.trim();
 
   if (!chatHasTranscript()) {
-    showChatError("字幕尚未加载，无法对话");
+    const otherVideo =
+      chatConversationFromHistory && chatVideoId !== currentVideoId;
+    showChatError(
+      otherVideo
+        ? "该字幕缓存已过期，打开该视频后可继续提问"
+        : "字幕尚未加载，无法对话",
+    );
     return;
   }
   if (!question) return;
@@ -1774,31 +2384,38 @@ async function sendChatMessage() {
   isChatSending = true;
   updateChatComposerState();
   renderChatMessages();
-  scrollChatToBottom();
+  showChatThinking();
 
-  const requestVideoId = currentVideoId;
+  const requestChatVideoId = chatVideoId;
 
   try {
     const result = await chrome.runtime.sendMessage({
       action: "chatAsk",
-      videoTitle: currentVideoTitle,
-      channelName: currentChannelName,
-      videoDescription: currentVideoDescription,
-      transcriptText: currentTranscriptTimestamped,
-      messages: chatMessages.map((message) => ({
+      videoTitle: chatVideoTitle || currentVideoTitle,
+      channelName: chatVideoChannel || currentChannelName,
+      videoDescription:
+        chatVideoId === currentVideoId ? currentVideoDescription : "",
+      transcriptText: chatContextTranscript,
+      videoDuration: chatVideoDuration,
+      videoUrl: chatVideoUrl || canonicalVideoUrl(chatVideoId),
+      analysisSummary: chatAnalysisSummary(),
+      // The background appends the current question itself, so the history
+      // must stop at the previous turn or the question would be sent twice.
+      messages: chatMessages.slice(0, -1).map((message) => ({
         role: message.role,
         content: message.content,
       })),
       question: question,
     });
 
-    // The user may have switched videos while the request was in flight; the
-    // answer then belongs to a conversation that no longer exists.
-    if (currentVideoId !== requestVideoId) return;
+    // An answer belongs to the conversation that asked; history navigation or
+    // a video switch while the request was in flight makes it stale.
+    if (chatVideoId !== requestChatVideoId) return;
 
     if (result && result.success && result.answer) {
       chatMessages.push({ role: "assistant", content: result.answer });
       renderChatMessages();
+      await saveChatConversation();
     } else {
       showChatError(chatErrorMessage(result));
     }
@@ -1806,29 +2423,32 @@ async function sendChatMessage() {
     console.error("[YouTube Digest Panel] Chat error:", error);
     showChatError("对话失败，请重试。");
   } finally {
-    isChatSending = false;
-    updateChatComposerState();
-    scrollChatToBottom();
+    // A stale response must not reset the state of a conversation that was
+    // opened while the request was still in flight.
+    if (chatVideoId === requestChatVideoId) {
+      clearChatThinking();
+      isChatSending = false;
+      updateChatComposerState();
+      scrollChatToBottom();
+    }
   }
 }
 
 function exportChat() {
   if (!chatMessages.length) return;
 
-  const lines = [
-    "YouTube Digest 对话",
-    `视频：${currentVideoTitle || "未知"}`,
-    `频道：${currentChannelName || "未知"}`,
-    "",
-  ];
-  chatMessages.forEach((message) => {
-    const role = message.role === "assistant" ? "AI" : "我";
-    lines.push(`[${role}] ${message.content}`);
-    lines.push("");
+  // Export exactly the conversation on screen, including its video link.
+  const record = buildChatRecord({
+    videoId: chatVideoId,
+    videoUrl: chatVideoUrl || canonicalVideoUrl(chatVideoId),
+    videoTitle: chatVideoTitle || currentVideoTitle,
+    channelName: chatVideoChannel || currentChannelName,
+    videoDuration: chatVideoDuration,
+    messages: chatMessages,
+    now: Date.now(),
   });
-
-  const filename = `${sanitizeFilename(currentVideoTitle)}-对话.txt`;
-  downloadTextFile(`${lines.join("\n").trimEnd()}\n`, filename);
+  const filename = `${sanitizeFilename(record.videoTitle)}-对话.txt`;
+  downloadTextFile(formatChatExport(record), filename);
 }
 
 // ============================================================
@@ -1964,11 +2584,15 @@ function downloadTextFile(text, filename) {
 }
 
 function sanitizeFilename(str) {
-  return (str || "untitled")
-    .replace(/[^\w\s-]/g, "")
+  // Keep letters (including Chinese), numbers, spaces and hyphens; drop the
+  // characters that are actually illegal in a filename.
+  const cleaned = String(str || "")
+    .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .replace(/\s+/g, "-")
-    .substring(0, 50)
-    .toLowerCase();
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  const trimmed = cleaned.substring(0, 50).replace(/-+$/, "");
+  return trimmed || "untitled";
 }
 
 // ============================================================
@@ -3185,4 +3809,9 @@ globalThis.__YTD_TRANSCRIPT_TESTING__ = {
   getNavigationUrl,
   renderSubtitleInlineMarkup,
   renderTranscriptSegmentContent,
+  chatStorageKey,
+  buildChatRecord,
+  pruneChatIndex,
+  formatChatExport,
+  sanitizeFilename,
 };

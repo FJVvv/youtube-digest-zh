@@ -20,7 +20,7 @@ test("manifest uses minimized install-time permissions", () => {
     "http://*/*",
     "https://*/*",
   ]);
-  assert.equal(manifest.version, "1.3.0");
+  assert.equal(manifest.version, "1.4.0");
   assert.deepEqual(
     manifest.content_scripts.map((entry) => entry.js),
     [["caption-capture.js"], ["content.js"]],
@@ -180,6 +180,12 @@ test("release copy documents current scope without em dashes", () => {
   assert.doesNotMatch(customizationPrompt, /Documents|USERPROFILE/);
 
   assert.match(readme, /^## Remix it with your coding agent$/m);
+  assert.match(readme, /^## New in v1\.4\.0$/m);
+  assert.match(readme, /thinking animation/i);
+  assert.match(readme, /Conversations are saved locally per video/i);
+  assert.match(readme, /\*\*History\*\* in the chat tab/);
+  assert.match(chineseReadme, /^## v1\.4\.0 更新$/m);
+  assert.match(chineseReadme, /对话按视频保存在本机/);
   assert.match(readme, /more translation languages/i);
   assert.match(readme, /customized summary templates/i);
   assert.match(readme, /vocabulary notebook/i);
@@ -343,6 +349,35 @@ test("retired Remix and reader files are absent", () => {
     "config.example.js",
   ]) {
     assert.equal(fs.existsSync(path.join(root, file)), false, file);
+  }
+});
+
+test("chat tab exposes saved history, reference link, suggestions, and thinking state", () => {
+  const html = read("sidepanel.html");
+  const js = read("sidepanel.js");
+
+  for (const id of [
+    "chatHistoryBtn",
+    "chatHistoryPanel",
+    "chatHistoryList",
+    "chatReferenceLink",
+    "chatReferenceMeta",
+    "chatSuggestions",
+    "chatThinking",
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  }
+  for (const token of [
+    "ytd_chat_index",
+    "chatHistoryBtn",
+    "chatReferenceLink",
+    "chatSuggestions",
+    "chatThinking",
+    "videoDuration",
+    "videoUrl",
+    "analysisSummary",
+  ]) {
+    assert.match(js, new RegExp(token), token);
   }
 });
 

@@ -436,6 +436,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       videoTitle: message.videoTitle,
       channelName: message.channelName,
       videoDescription: message.videoDescription,
+      videoDuration: message.videoDuration,
+      videoUrl: message.videoUrl,
+      analysisSummary: message.analysisSummary,
       messages: message.messages,
       question: message.question,
     })
@@ -1924,9 +1927,30 @@ async function callAiTranslation(
 // VIDEO CHAT
 // ============================================================
 
-const CHAT_TRANSCRIPT_MAX_CHARS = 40_000;
-const CHAT_HISTORY_MAX_MESSAGES = 20;
-const CHAT_MAX_TOKENS = 2_048;
+const CHAT_TRANSCRIPT_MAX_CHARS = 60_000;
+const CHAT_HISTORY_MAX_MESSAGES = 24;
+const CHAT_MAX_TOKENS = 4_096;
+
+/**
+ * Renders the video length as M:SS for the prompt. The side panel normally
+ * sends seconds; anything unusable falls back to "Unknown".
+ */
+function formatVideoDurationForChat(videoDuration) {
+  if (typeof videoDuration === "number" && Number.isFinite(videoDuration)) {
+    const totalSeconds = Math.max(0, Math.floor(videoDuration));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+  const raw = String(videoDuration ?? "").trim();
+  if (!raw) return "Unknown";
+  // Already in M:SS / H:MM:SS form — pass it through untouched.
+  if (/^\d{1,3}:\d{2}(:\d{2})?$/.test(raw)) return raw;
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    return formatVideoDurationForChat(Number(raw));
+  }
+  return "Unknown";
+}
 
 /**
  * Keeps the beginning and the end of an over-long transcript so the model sees
@@ -1942,7 +1966,7 @@ function truncateTranscriptForChat(
   const tailLength = maxChars - headLength;
   return [
     text.slice(0, headLength),
-    "[…字幕中间部分因长度限制已省略…]",
+    "[…字幕中间部分因长度限制已省略：未覆盖的内容不要猜测…]",
     text.slice(text.length - tailLength),
   ].join("\n\n");
 }
@@ -1979,6 +2003,9 @@ async function handleChatAsk({
   videoTitle,
   channelName,
   videoDescription,
+  videoDuration,
+  videoUrl,
+  analysisSummary,
   messages,
   question,
 }) {
@@ -2013,7 +2040,10 @@ async function handleChatAsk({
     const promptVariables = {
       videoTitle: videoTitle || "Unknown",
       channelName: channelName || "Unknown",
+      videoDuration: formatVideoDurationForChat(videoDuration),
+      videoUrl: String(videoUrl || "").trim() || "Unknown",
       videoDescription: videoDescription || "No description available",
+      analysisSummary: String(analysisSummary || "").trim() || "（无）",
       transcriptText: transcript,
     };
     const systemPrompt = await loadPromptSection(
@@ -2025,12 +2055,25 @@ async function handleChatAsk({
       question: trimmedQuestion,
     });
 
+    // The side panel usually appends the pending question to the history it
+    // sends, so the last turn can already be this same question. Drop it here
+    // instead of asking the model the same thing twice in a row.
+    const history = normalizeChatHistory(messages);
+    const lastHistoryMessage = history[history.length - 1];
+    if (
+      lastHistoryMessage &&
+      lastHistoryMessage.role === "user" &&
+      lastHistoryMessage.content.trim() === trimmedQuestion
+    ) {
+      history.pop();
+    }
+
     const { text } = await requestAiCompletion({
       maxTokens: CHAT_MAX_TOKENS,
-      temperature: 0.7,
+      temperature: 0.6,
       messages: [
         { role: "system", content: systemPrompt },
-        ...normalizeChatHistory(messages),
+        ...history,
         { role: "user", content: userPrompt },
       ],
     });
@@ -2144,6 +2187,10 @@ globalThis.__YTD_TRANSLATION_TESTING__ = {
   handleTestAiConnection,
   formatYouTubeCues,
   truncateTranscriptForChat,
+  formatVideoDurationForChat,
+  CHAT_TRANSCRIPT_MAX_CHARS,
+  CHAT_HISTORY_MAX_MESSAGES,
+  CHAT_MAX_TOKENS,
   buildAiRequestBody,
   isOfficialDeepSeekEndpoint,
 };

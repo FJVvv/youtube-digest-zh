@@ -49,7 +49,7 @@ YouTube Digest uses Chrome's extension storage and the open side panel, not a Yo
 
 - Subtitle source, AI endpoint, model, and API keys remain on the device in Chrome's extension storage.
 - Saved notes remain until you delete them or remove or clear the extension's data. The extension keeps up to 100 notes.
-- Chat conversations stay in the open side panel for the current video and are cleared when you switch videos. They are not saved to Chrome storage.
+- Chat conversations are saved locally per video in Chrome's extension storage, up to 50 video conversations and 100 messages per conversation. Reopening a video restores its conversation, and the chat History list can open earlier ones. Deleting a conversation in the panel, clearing cached data, or resetting extension data removes it. Exporting a conversation writes a text file that includes the video's link.
 - Recent transcript, digest, and per-segment translation cache entries are stored locally. The cache is limited to 20 videos, and entries older than 30 days are removed when the side panel opens.
 
 Chrome extension storage is not a password vault. Anyone with sufficient access to your browser profile or device may be able to recover locally stored keys or content. Use scoped keys where providers support them, set spending limits, and rotate or revoke a key if the device or browser profile is compromised.
@@ -57,6 +57,7 @@ Chrome extension storage is not a password vault. Anyone with sufficient access 
 To remove data:
 
 - delete individual saved notes in YouTube Digest;
+- delete individual conversations from the chat History list;
 - use the Options page to clear cached digests, delete all notes, or reset all extension data;
 - remove the extension or clear its stored data from Chrome to delete all local settings, keys, notes, and cache entries; and
 - revoke keys at your AI provider or at Supadata to stop their future use.
@@ -68,7 +69,7 @@ Clearing local data does not delete information already processed or retained by
 YouTube Digest uses Chrome permissions for these purposes:
 
 - `sidePanel`: display the YouTube Digest interface beside YouTube.
-- `storage`: store settings, keys, notes, and cached results locally.
+- `storage`: store settings, keys, notes, chat conversations, and cached results locally.
 - `tabs`: identify and interact with the active YouTube tab.
 - `scripting`: coordinate the extension's YouTube page controls.
 - YouTube host access: read the active video's URL and metadata, read its caption track inside the page, and provide timestamp controls.

@@ -256,22 +256,106 @@
           <div class="section">
             <div class="section-header">
               <div class="section-title">视频对话</div>
-              <button
-                class="enhance-btn"
-                id="chatExportBtn"
-                type="button"
-                disabled
-              >
-                导出
-              </button>
+              <div class="chat-header-actions">
+                <button
+                  class="enhance-btn"
+                  id="chatHistoryBtn"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="chatHistoryPanel"
+                >
+                  历史
+                </button>
+                <button
+                  class="enhance-btn"
+                  id="chatExportBtn"
+                  type="button"
+                  disabled
+                >
+                  导出
+                </button>
+              </div>
             </div>
             <div class="chat-reference" id="chatReferenceCard">
               <div class="chat-reference-text" id="chatReference"></div>
+              <div class="chat-reference-actions">
+                <a
+                  class="chat-reference-link"
+                  id="chatReferenceLink"
+                  href="#"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  hidden
+                >
+                  打开视频
+                </a>
+                <span
+                  class="chat-reference-meta"
+                  id="chatReferenceMeta"
+                  hidden
+                ></span>
+              </div>
             </div>
-            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-history-panel" id="chatHistoryPanel" hidden>
+              <div class="chat-history-title">历史对话</div>
+              <div class="chat-history-empty" id="chatHistoryEmpty">
+                还没有保存的对话
+              </div>
+              <div class="chat-history-list" id="chatHistoryList"></div>
+            </div>
+            <div class="chat-messages chat-messages-empty" id="chatMessages">
+              <!-- Thinking bubble: reused by sidepanel.js while an answer is in flight. -->
+              <div
+                class="chat-message chat-message-assistant chat-thinking"
+                id="chatThinking"
+                role="status"
+                hidden
+              >
+                <div class="chat-message-label">AI</div>
+                <div class="chat-message-text chat-thinking-body">
+                  <span class="chat-thinking-dots" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </span>
+                  <span class="chat-thinking-text" id="chatThinkingText">
+                    正在思考…
+                  </span>
+                </div>
+              </div>
+            </div>
             <div class="chat-empty" id="chatEmpty">
               还没有对话。在下面输入问题，点发送后 AI 才会回答。
+              <div class="chat-suggestions" id="chatSuggestions">
+                <button
+                  class="chat-suggestion"
+                  type="button"
+                  data-prompt="深度解读这个视频"
+                >
+                  深度解读这个视频
+                </button>
+                <button
+                  class="chat-suggestion"
+                  type="button"
+                  data-prompt="核心观点是什么"
+                >
+                  核心观点是什么
+                </button>
+                <button
+                  class="chat-suggestion"
+                  type="button"
+                  data-prompt="按时间线梳理"
+                >
+                  按时间线梳理
+                </button>
+              </div>
             </div>
+            <div
+              class="chat-context-note"
+              id="chatContextNote"
+              role="status"
+              hidden
+            ></div>
             <div class="chat-composer">
               <textarea
                 class="chat-input"
