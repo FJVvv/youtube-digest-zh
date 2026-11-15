@@ -731,10 +731,18 @@ async function startDigest(videoId, videoUrl) {
   });
 
   if (!transcriptResult.success) {
+    if (transcriptResult.error === "FREE_CAPTIONS_FAILED") {
+      showError(
+        "无法读取免费字幕",
+        transcriptResult.message || "免费字幕读取失败。",
+      );
+      return;
+    }
     if (transcriptResult.error === "NO_SUPADATA_KEY") {
       showError(
         "缺少 API 密钥",
-        "请在 YouTube Digest 设置中添加 Supadata API 密钥。",
+        transcriptResult.message ||
+          "请在 YouTube Digest 设置中添加 Supadata API 密钥。",
       );
       return;
     }
