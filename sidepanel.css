@@ -1612,6 +1612,88 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* Assistant answers are built from a small Markdown subset: paragraphs, lists,
+   bold runs, inline code and clickable timestamps. */
+.chat-message-assistant {
+  max-width: 94%;
+}
+
+.chat-message-assistant .chat-message-text {
+  white-space: normal;
+}
+
+.chat-message-text p,
+.chat-message-text ul,
+.chat-message-text ol {
+  margin: 0 0 8px;
+}
+
+.chat-message-text > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-message-text ul,
+.chat-message-text ol {
+  padding-left: 18px;
+}
+
+.chat-message-text li {
+  margin: 2px 0;
+}
+
+.chat-message-text li::marker {
+  color: var(--text-muted);
+}
+
+.chat-heading {
+  margin: 12px 0 6px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.chat-message-text > .chat-heading:first-child {
+  margin-top: 0;
+}
+
+.chat-message-text strong {
+  font-weight: 700;
+}
+
+.chat-message-text code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--accent-dim);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+/* Timestamps jump the player, or open the saved video at that moment. */
+.chat-timestamp {
+  display: inline;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.chat-timestamp:hover {
+  color: var(--accent-hover);
+}
+
+.chat-timestamp:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .chat-error {
   align-self: stretch;
   padding: 10px 12px;

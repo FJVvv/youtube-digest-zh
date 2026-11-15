@@ -777,12 +777,13 @@ async function resolveYouTubeTabId(tabId) {
 
 /**
  * Tries to read the video's own caption track for free.
- * Returns null on any failure so the caller can fall back to Supadata.
+ * Returns { ok: true, transcript } on success, or { ok: false, code } so the
+ * caller can decide between the Supadata fallback and a plain error.
  */
 async function fetchYouTubeTranscript(videoId, tabId) {
   try {
     const resolvedTabId = await resolveYouTubeTabId(tabId);
-    if (!resolvedTabId) return null;
+    if (!resolvedTabId) return { ok: false, code: "NO_YOUTUBE_TAB" };
     const timeout = new Promise((resolve) =>
       setTimeout(() => resolve(null), FREE_CAPTIONS_TIMEOUT_MS),
     );
@@ -798,17 +799,40 @@ async function fetchYouTubeTranscript(videoId, tabId) {
       response.success !== true ||
       !Array.isArray(response.cues)
     ) {
+      const code = String(
+        response?.code ||
+          response?.error ||
+          response?.message ||
+          "EMPTY_RESPONSE",
+      );
       debugLog(
         "[YouTube Digest BG] Free caption extraction unavailable:",
-        response?.code || response?.error || response?.message || "empty response",
+        code,
       );
-      return null;
+      return { ok: false, code };
     }
-    return formatYouTubeCues(response.cues, response.language);
+    const transcript = formatYouTubeCues(response.cues, response.language);
+    if (!transcript) return { ok: false, code: "EMPTY_CUES" };
+    return { ok: true, transcript };
   } catch (error) {
     debugLog("[YouTube Digest BG] Free caption extraction failed:", error);
-    return null;
+    return {
+      ok: false,
+      code: error?.name === "TimeoutError" ? "TIMEOUT" : "CAPTION_FETCH_FAILED",
+    };
   }
+}
+
+/**
+ * Decides which transcript source this request should use. An explicit
+ * per-request value wins over the saved setting; unknown values fall back to
+ * the free-captions-first behaviour.
+ */
+function resolveTranscriptSource(requestedSource, savedSource) {
+  for (const candidate of [requestedSource, savedSource]) {
+    if (candidate === "youtube" || candidate === "supadata") return candidate;
+  }
+  return "auto";
 }
 
 /**
@@ -825,8 +849,8 @@ async function fetchYouTubeTranscript(videoId, tabId) {
  *
  * @param {string} videoId - The YouTube video ID (e.g., "dQw4w9WgXcQ")
  * @param {number|null} tabId - The YouTube tab that should provide captions
- * @param {string} transcriptSource - "auto" (free captions, then Supadata) or "supadata"
- * @returns {Object} - { success, transcriptSource, transcript, transcriptText, transcriptTextTimestamped, language } or { success: false, error, message }
+ * @param {string} transcriptSource - "auto" (free captions, then Supadata), "youtube" (free only), or "supadata"
+ * @returns {Object} - { success, transcriptSource, transcript, transcriptText, transcriptTextTimestamped, language, freeCaptionFailure? } or { success: false, error, code?, message }
  */
 async function handleFetchTranscript(
   videoId,
@@ -835,15 +859,26 @@ async function handleFetchTranscript(
 ) {
   try {
     const settings = await getSettings();
-    const source =
-      transcriptSource === "supadata" || settings.transcriptSource === "supadata"
-        ? "supadata"
-        : "auto";
+    const source = resolveTranscriptSource(
+      transcriptSource,
+      settings.transcriptSource,
+    );
+    let freeCaptionFailure = null;
 
-    // Free path first: parse the captions YouTube already loaded in the page.
-    if (source === "auto") {
-      const freeTranscript = await fetchYouTubeTranscript(videoId, tabId);
-      if (freeTranscript) return freeTranscript;
+    // Free path: parse the captions YouTube already loaded in the page.
+    if (source === "youtube" || source === "auto") {
+      const freeResult = await fetchYouTubeTranscript(videoId, tabId);
+      if (freeResult.ok) return freeResult.transcript;
+      freeCaptionFailure = freeResult.code || "FREE_CAPTIONS_UNAVAILABLE";
+      // "youtube" means the user explicitly asked to never call Supadata.
+      if (source === "youtube") {
+        return {
+          success: false,
+          error: "FREE_CAPTIONS_FAILED",
+          code: freeCaptionFailure,
+          message: `无法读取 YouTube 自带字幕（原因：${freeCaptionFailure}）。当前字幕来源设置为「仅免费字幕」，不会调用 Supadata。请在设置中改用「免费字幕优先」或「仅使用 Supadata」，或打开一个有字幕的视频。`,
+        };
+      }
     }
 
     if (!settings.supadataApiKey) {
@@ -880,7 +915,14 @@ async function handleFetchTranscript(
     if (response.status === 202) {
       const jobData = await response.json();
       // Poll for the result
-      return await pollTranscriptJob(jobData.jobId, settings.supadataApiKey);
+      const jobResult = await pollTranscriptJob(
+        jobData.jobId,
+        settings.supadataApiKey,
+      );
+      if (jobResult && jobResult.success && freeCaptionFailure) {
+        jobResult.freeCaptionFailure = freeCaptionFailure;
+      }
+      return jobResult;
     }
 
     if (response.status === 206) {
@@ -967,7 +1009,7 @@ async function handleFetchTranscript(
       };
     }
 
-    return {
+    const result = {
       success: true,
       transcriptSource: "supadata",
       transcript: transcript,
@@ -975,6 +1017,10 @@ async function handleFetchTranscript(
       transcriptTextTimestamped: transcriptTextTimestamped.trim(), // For AI
       language: typeof data.lang === "string" ? data.lang : null,
     };
+    // Tell the panel why the free path was skipped, so a fallback that spends
+    // a Supadata credit is never silent.
+    if (freeCaptionFailure) result.freeCaptionFailure = freeCaptionFailure;
+    return result;
   } catch (error) {
     console.error("Transcript fetch error:", error);
     return {
@@ -1929,7 +1975,7 @@ async function callAiTranslation(
 
 const CHAT_TRANSCRIPT_MAX_CHARS = 60_000;
 const CHAT_HISTORY_MAX_MESSAGES = 24;
-const CHAT_MAX_TOKENS = 4_096;
+const CHAT_MAX_TOKENS = 2_048;
 
 /**
  * Renders the video length as M:SS for the prompt. The side panel normally
@@ -2185,6 +2231,8 @@ globalThis.__YTD_TRANSLATION_TESTING__ = {
   handleFetchTranscript,
   handleChatAsk,
   handleTestAiConnection,
+  fetchYouTubeTranscript,
+  resolveTranscriptSource,
   formatYouTubeCues,
   truncateTranscriptForChat,
   formatVideoDurationForChat,

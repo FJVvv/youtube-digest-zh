@@ -296,7 +296,7 @@ test("chat truncates an oversized transcript with the explicit marker", async ()
   );
 });
 
-test("chat requests use the 4096 max_tokens budget and 0.6 temperature", async () => {
+test("chat requests use the 2048 max_tokens budget and 0.6 temperature", async () => {
   const requests = [];
   const helpers = loadBackgroundHelpers({
     fetchImpl: promptFileFetch(async (_url, options) => {
@@ -321,7 +321,7 @@ test("chat requests use the 4096 max_tokens budget and 0.6 temperature", async (
   });
 
   assert.equal(result.success, true);
-  assert.equal(requests[0].max_tokens, 4096);
+  assert.equal(requests[0].max_tokens, 2048);
   assert.equal(requests[0].temperature, 0.6);
 });
 

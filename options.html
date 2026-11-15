@@ -63,13 +63,20 @@
               >
             </label>
             <label class="radio-option">
+              <input type="radio" name="transcriptSource" value="youtube" />
+              <span data-i18n="transcriptSourceYoutube"
+                >Free YouTube captions only (never calls Supadata)</span
+              >
+            </label>
+            <label class="radio-option">
               <input type="radio" name="transcriptSource" value="supadata" />
               <span data-i18n="transcriptSourceSupadata">Supadata only</span>
             </label>
           </fieldset>
           <p class="help" data-i18n="transcriptSourceHelp">
             Free captions read YouTube's own caption tracks and do not consume
-            Supadata credits.
+            Supadata credits. Choose the free-only option to never call
+            Supadata.
           </p>
           <label for="supadataApiKey" data-i18n="supadataApiKeyLabel"
             >Supadata API key (optional)</label

@@ -22,6 +22,7 @@ let currentTranscriptText = null; // Plain text (for display/export)
 let currentTranscriptTimestamped = null; // With timestamps for AI analysis
 let currentTranscriptLanguage = null;
 let currentTranscriptSource = null; // "youtube" | "supadata" | null
+let currentTranscriptSourceFailure = null; // why the free caption path failed
 let currentVideoTitle = "";
 let currentChannelName = "";
 let currentVideoDescription = "";
@@ -504,6 +505,9 @@ function setupEventListeners() {
   document
     .getElementById("chatSuggestions")
     ?.addEventListener("click", handleChatSuggestionClick);
+  document
+    .getElementById("chatMessages")
+    ?.addEventListener("click", handleChatTimestampClick);
 }
 
 function setNotesFilter(showAll) {
@@ -653,6 +657,7 @@ async function startDigest(videoId, videoUrl) {
     currentTranscriptTimestamped = cached.transcriptTimestamped;
     currentTranscriptLanguage = cached.transcriptLanguage || null;
     currentTranscriptSource = cached.transcriptSource || null;
+    currentTranscriptSourceFailure = null;
     isAnalysisLoading = false;
 
     // Restore semantic-segment translations from persistent storage.
@@ -706,6 +711,7 @@ async function startDigest(videoId, videoUrl) {
   currentTranscriptTimestamped = null;
   currentTranscriptLanguage = null;
   currentTranscriptSource = null;
+  currentTranscriptSourceFailure = null;
   isAnalysisLoading = false;
 
   if (currentVideoTitle || currentChannelName) {
@@ -744,6 +750,7 @@ async function startDigest(videoId, videoUrl) {
   currentTranscriptTimestamped = transcriptResult.transcriptTextTimestamped;
   currentTranscriptLanguage = transcriptResult.language || null;
   currentTranscriptSource = transcriptResult.transcriptSource || null;
+  currentTranscriptSourceFailure = transcriptResult.freeCaptionFailure || null;
 
   // Render transcript immediately (no LLM needed)
   renderTranscript();
@@ -1131,7 +1138,9 @@ function updateTranscriptSourceNote() {
     return;
   }
   if (currentTranscriptSource === "supadata") {
-    note.textContent = "字幕来源：Supadata（本次已使用 1 积分）";
+    note.textContent = currentTranscriptSourceFailure
+      ? `字幕来源：Supadata（本次已使用 1 积分；免费字幕失败：${currentTranscriptSourceFailure}）`
+      : "字幕来源：Supadata（本次已使用 1 积分）";
     note.hidden = false;
     return;
   }
@@ -2000,6 +2009,194 @@ function showChatError(text) {
   scrollChatToBottom();
 }
 
+// ============================================================
+// CHAT MESSAGE RENDERING (GEMINI-STYLE MARKDOWN)
+// ============================================================
+
+// Only a tiny, safe subset is recognized: **bold**, `code`, and timestamps.
+// Lookarounds keep digits from a larger number (for example 2024:12) from
+// turning into a link.
+const CHAT_INLINE_PATTERN =
+  /\*\*([^*]+)\*\*|`([^`]+)`|(?<![\d])\[?(\d{1,2}):(\d{2})\]?(?![\d])/g;
+
+function splitChatInline(text) {
+  const source = String(text || "");
+  const tokens = [];
+  let lastIndex = 0;
+  let match = CHAT_INLINE_PATTERN.exec(source);
+  while (match) {
+    if (match.index > lastIndex) {
+      tokens.push({
+        type: "text",
+        text: source.slice(lastIndex, match.index),
+      });
+    }
+    if (match[1] !== undefined) {
+      tokens.push({ type: "bold", text: match[1] });
+    } else if (match[2] !== undefined) {
+      tokens.push({ type: "code", text: match[2] });
+    } else {
+      tokens.push({
+        type: "timestamp",
+        text: `${Number(match[3])}:${match[4]}`,
+        seconds: Number(match[3]) * 60 + Number(match[4]),
+      });
+    }
+    lastIndex = match.index + match[0].length;
+    match = CHAT_INLINE_PATTERN.exec(source);
+  }
+  if (lastIndex < source.length) {
+    tokens.push({ type: "text", text: source.slice(lastIndex) });
+  }
+  return tokens;
+}
+
+function parseChatMarkdown(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const blocks = [];
+  let paragraph = [];
+  let list = null;
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    blocks.push({ type: "paragraph", text: paragraph.join(" ") });
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (!list) return;
+    blocks.push(list);
+    list = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const heading = line.match(/^(#{2,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({
+        type: "heading",
+        level: heading[1].length,
+        text: heading[2].trim(),
+      });
+      continue;
+    }
+
+    const ordered = line.match(/^\d+[.)]\s+(.*)$/);
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    if (ordered || bullet) {
+      flushParagraph();
+      const isOrdered = Boolean(ordered);
+      if (!list || list.ordered !== isOrdered) {
+        flushList();
+        list = { type: "list", ordered: isOrdered, items: [] };
+      }
+      list.items.push((ordered || bullet)[1].trim());
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line);
+  }
+  flushParagraph();
+  flushList();
+  return blocks;
+}
+
+function appendChatInline(parent, text) {
+  for (const token of splitChatInline(text)) {
+    if (token.type === "bold") {
+      const strong = document.createElement("strong");
+      strong.textContent = token.text;
+      parent.appendChild(strong);
+    } else if (token.type === "code") {
+      const code = document.createElement("code");
+      code.textContent = token.text;
+      parent.appendChild(code);
+    } else if (token.type === "timestamp") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chat-timestamp";
+      button.dataset.seconds = String(token.seconds);
+      button.textContent = token.text;
+      button.setAttribute("aria-label", `跳转到 ${token.text}`);
+      parent.appendChild(button);
+    } else {
+      parent.appendChild(document.createTextNode(token.text));
+    }
+  }
+}
+
+/**
+ * Builds the assistant bubble as DOM nodes. The model text is never treated as
+ * HTML: every recognized construct is created as an element and every other
+ * character becomes a text node.
+ */
+function buildChatContent(text) {
+  const fragment = document.createDocumentFragment();
+  for (const block of parseChatMarkdown(text)) {
+    if (block.type === "heading") {
+      const heading = document.createElement(block.level === 3 ? "h4" : "h3");
+      heading.className = "chat-heading";
+      appendChatInline(heading, block.text);
+      fragment.appendChild(heading);
+    } else if (block.type === "list") {
+      const list = document.createElement(block.ordered ? "ol" : "ul");
+      list.className = "chat-list";
+      for (const item of block.items) {
+        const li = document.createElement("li");
+        appendChatInline(li, item);
+        list.appendChild(li);
+      }
+      fragment.appendChild(list);
+    } else {
+      const paragraph = document.createElement("p");
+      appendChatInline(paragraph, block.text);
+      fragment.appendChild(paragraph);
+    }
+  }
+  if (!fragment.childNodes.length) {
+    const paragraph = document.createElement("p");
+    appendChatInline(paragraph, String(text || ""));
+    fragment.appendChild(paragraph);
+  }
+  return fragment;
+}
+
+/**
+ * A timestamp in a saved conversation belongs to the video it was saved with.
+ * Current video: seek the player. Other video: open that video at that time.
+ */
+async function handleChatTimestampClick(event) {
+  const button = event.target?.closest?.(".chat-timestamp");
+  if (!button) return;
+  const seconds = Number(button.dataset.seconds);
+  if (!Number.isFinite(seconds)) return;
+
+  if (chatVideoId && chatVideoId === currentVideoId) {
+    await seekTo(seconds);
+    return;
+  }
+
+  let url = chatVideoUrl;
+  if (!url) {
+    try {
+      url = canonicalVideoUrl(chatVideoId);
+    } catch (_error) {
+      return;
+    }
+  }
+  const base = url.replace(/[?&]t=\d+s?/, "");
+  const separator = base.includes("?") ? "&" : "?";
+  chrome.tabs.create({ url: `${base}${separator}t=${seconds}s` });
+}
+
 /**
  * Builds every bubble with textContent. Message text comes from the user and
  * from the model, so it must never be interpreted as HTML.
@@ -2032,7 +2229,11 @@ function renderChatMessages() {
 
     const text = document.createElement("div");
     text.className = "chat-message-text";
-    text.textContent = message.content;
+    if (isAssistant) {
+      text.appendChild(buildChatContent(message.content));
+    } else {
+      text.textContent = message.content;
+    }
 
     bubble.append(label, text);
     container.appendChild(bubble);
@@ -3814,4 +4015,8 @@ globalThis.__YTD_TRANSCRIPT_TESTING__ = {
   pruneChatIndex,
   formatChatExport,
   sanitizeFilename,
+  parseChatMarkdown,
+  splitChatInline,
+  buildChatContent,
+  handleChatTimestampClick,
 };

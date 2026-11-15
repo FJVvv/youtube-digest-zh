@@ -16,6 +16,12 @@ YouTube Digest is a bring-your-own-key project installed locally from GitHub. It
 
 ![YouTube Digest demo](YouTube%20Digest%20demo.png)
 
+## New in v1.5.0
+
+- Chat answers are more concise and easier to scan: a direct answer first, then short bold points, with at most one clickable [M:SS] timestamp per point instead of timestamp ranges. The output budget is 2,048 tokens.
+- Timestamps in chat are clickable. On the current video they seek the player; in a saved conversation they open that video at the same moment in a new tab.
+- Settings now offer **Free YouTube captions only**, a transcript source that never calls Supadata and never spends a credit. If free captions cannot be read, the panel shows the reason, and **Free captions first** still falls back to Supadata when you have a key.
+
 ## New in v1.4.0
 
 - Deeper video chat: answers open with a one-line verdict, then develop the point with [M:SS] evidence from the transcript. Background knowledge is labeled as background, and the model says so when the captions do not cover something. It receives the video duration, URL, description, any existing overview, and up to 60,000 characters of transcript, and can use up to 4,096 output tokens.

@@ -14,9 +14,11 @@ const YTD_OPTIONS = (() => {
       transcriptSourceLegend: "Transcript source",
       transcriptSourceAuto:
         "Free YouTube captions first (recommended, falls back to Supadata)",
+      transcriptSourceYoutube:
+        "Free YouTube captions only (never calls Supadata)",
       transcriptSourceSupadata: "Supadata only",
       transcriptSourceHelp:
-        "Free captions read YouTube's own caption tracks and do not consume Supadata credits.",
+        "Free captions read YouTube's own caption tracks and do not consume Supadata credits. Choose the free-only option to never call Supadata.",
       supadataApiKeyLabel: "Supadata API key (optional)",
       supadataApiKeyPlaceholder: "Paste your Supadata key",
       supadataHelp: "Used to fetch timestamped YouTube subtitles. ",
@@ -114,9 +116,10 @@ const YTD_OPTIONS = (() => {
       transcriptProvider: "字幕服务",
       transcriptSourceLegend: "字幕来源",
       transcriptSourceAuto: "免费字幕优先（推荐，失败时用 Supadata 兜底）",
+      transcriptSourceYoutube: "仅使用免费字幕（绝不调用 Supadata）",
       transcriptSourceSupadata: "仅使用 Supadata",
       transcriptSourceHelp:
-        "免费字幕直接读取 YouTube 自带字幕轨，不消耗 Supadata 积分。",
+        "免费字幕直接读取 YouTube 自带字幕轨，不消耗 Supadata 积分。选「仅免费字幕」时不会调用 Supadata。",
       supadataApiKeyLabel: "Supadata API 密钥（可选）",
       supadataApiKeyPlaceholder: "粘贴你的 Supadata 密钥",
       supadataHelp: "用于获取带时间戳的 YouTube 字幕。",

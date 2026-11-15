@@ -27,7 +27,7 @@ By default YouTube Digest reads the caption track that the YouTube page already 
 
 ### Supadata (optional fallback)
 
-When free captions cannot be read and you have enabled the fallback, YouTube Digest sends the canonical YouTube video URL to `https://api.supadata.ai` with your Supadata API key. Supadata returns the transcript and timestamps. A Supadata key is optional and is only used by this fallback path.
+When free captions cannot be read and you have enabled the fallback, YouTube Digest sends the canonical YouTube video URL to `https://api.supadata.ai` with your Supadata API key. Supadata returns the transcript and timestamps. A Supadata key is optional and is only used by this fallback path. If you choose **Free YouTube captions only** as the transcript source, the extension never contacts Supadata.
 
 ### AI endpoint you configure (DeepSeek by default)
 

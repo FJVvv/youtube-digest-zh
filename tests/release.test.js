@@ -20,7 +20,7 @@ test("manifest uses minimized install-time permissions", () => {
     "http://*/*",
     "https://*/*",
   ]);
-  assert.equal(manifest.version, "1.4.0");
+  assert.equal(manifest.version, "1.5.0");
   assert.deepEqual(
     manifest.content_scripts.map((entry) => entry.js),
     [["caption-capture.js"], ["content.js"]],
@@ -148,6 +148,7 @@ test("release copy documents current scope without em dashes", () => {
     assert.match(optionsPage, new RegExp(`id="${id}"`));
   }
   assert.match(optionsPage, /name="transcriptSource"/);
+  assert.match(optionsPage, /value="youtube"/);
   const detailsTag = optionsPage.match(
     /<details\b[^>]*class="card customization-card"[^>]*>/,
   );
@@ -180,6 +181,13 @@ test("release copy documents current scope without em dashes", () => {
   assert.doesNotMatch(customizationPrompt, /Documents|USERPROFILE/);
 
   assert.match(readme, /^## Remix it with your coding agent$/m);
+  assert.match(readme, /^## New in v1\.5\.0$/m);
+  assert.match(readme, /Free YouTube captions only/i);
+  assert.match(readme, /never calls Supadata and never spends a credit/i);
+  assert.match(readme, /clickable \[M:SS\] timestamp/i);
+  assert.match(chineseReadme, /^## v1\.5\.0 更新$/m);
+  assert.match(chineseReadme, /仅使用免费字幕/);
+  assert.match(chineseReadme, /可点击的 \[M:SS\] 时间戳/);
   assert.match(readme, /^## New in v1\.4\.0$/m);
   assert.match(readme, /thinking animation/i);
   assert.match(readme, /Conversations are saved locally per video/i);

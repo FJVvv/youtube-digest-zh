@@ -55,6 +55,9 @@ test("invalid AI settings fall back to safe defaults", () => {
   assert.equal(normalized.aiModel, settings.DEFAULTS.aiModel);
   assert.equal(normalized.transcriptSource, "auto");
 
+  const freeOnly = settings.normalize({ transcriptSource: "youtube" });
+  assert.equal(freeOnly.transcriptSource, "youtube");
+
   const longModel = settings.normalize({ aiModel: "m".repeat(121) });
   assert.equal(longModel.aiModel, settings.DEFAULTS.aiModel);
   const maxModel = settings.normalize({ aiModel: "m".repeat(120) });

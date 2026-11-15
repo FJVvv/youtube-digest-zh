@@ -15,7 +15,7 @@ var YTD_SETTINGS = (() => {
     transcriptSource: "auto",
   });
 
-  const TRANSCRIPT_SOURCES = new Set(["auto", "supadata"]);
+  const TRANSCRIPT_SOURCES = new Set(["auto", "youtube", "supadata"]);
 
   function isLegacyCustom(input) {
     return !!input && input.provider === "custom";
