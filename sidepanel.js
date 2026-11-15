@@ -2382,7 +2382,7 @@ function showChatThinking() {
     const text = document.createElement("span");
     text.className = "chat-thinking-text";
     text.id = "chatThinkingText";
-    text.textContent = "正在思考…";
+    text.textContent = "正在深度思考…";
     body.append(dots, text);
     bubble.append(label, body);
   }
@@ -2391,13 +2391,13 @@ function showChatThinking() {
   container.appendChild(bubble);
   bubble.hidden = false;
   const text = bubble.querySelector(".chat-thinking-text");
-  if (text) text.textContent = "正在思考…";
+  if (text) text.textContent = "正在深度思考…";
 
   const empty = document.getElementById("chatEmpty");
   if (empty) empty.style.display = "none";
   chatThinkingTimer = setTimeout(() => {
     if (!text || !text.isConnected) return;
-    text.textContent = "仍在思考，长视频可能需要更久…";
+    text.textContent = "仍在深度思考，长视频可能需要更久…";
   }, 8000);
   scrollChatToBottom();
 }
@@ -2546,18 +2546,74 @@ function handleChatSuggestionClick(event) {
 }
 
 /**
- * A compact summary of the existing analysis (chapter titles) so the chat can
- * reuse it instead of paying for another analysis request.
+ * A compact summary of the existing analysis (chapters, quotes, key moments) so
+ * the chat can reuse the same structure the Overview tab already shows instead
+ * of paying for another analysis request. This is what makes the chat answer
+ * from the whole-video overview rather than from raw transcript alone.
  */
-function chatAnalysisSummary() {
+const CHAT_ANALYSIS_CONTEXT_MAX_CHARS = 4000;
+const CHAT_ANALYSIS_CHAPTER_LIMIT = 20;
+const CHAT_ANALYSIS_QUOTE_LIMIT = 8;
+const CHAT_ANALYSIS_MOMENT_LIMIT = 20;
+
+function formatChatClock(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const minutes = Math.floor(total / 60);
+  const remainder = total % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+function chatAnalysisContext() {
   const analysis = chatVideoId === currentVideoId ? currentAnalysis : null;
   if (!analysis || typeof analysis !== "object") return "";
+
+  const parts = [];
+
   const chapters = Array.isArray(analysis.chapters) ? analysis.chapters : [];
-  const titles = chapters
-    .map((chapter) => String((chapter && chapter.title) || "").trim())
+  const chapterLines = [];
+  for (const chapter of chapters) {
+    if (chapterLines.length >= CHAT_ANALYSIS_CHAPTER_LIMIT) break;
+    const title = String((chapter && chapter.title) || "").trim();
+    if (!title) continue;
+    const summary = String((chapter && chapter.summary) || "").trim();
+    const stamp = String((chapter && chapter.timestamp) || "").trim();
+    chapterLines.push(
+      `${stamp ? `[${stamp}] ` : ""}${title}${summary ? `：${summary}` : ""}`,
+    );
+  }
+  if (chapterLines.length) {
+    parts.push(`章节：\n${chapterLines.join("\n")}`);
+  }
+
+  const quotes = Array.isArray(analysis.keyQuotes) ? analysis.keyQuotes : [];
+  const quoteLines = [];
+  for (const quote of quotes) {
+    if (quoteLines.length >= CHAT_ANALYSIS_QUOTE_LIMIT) break;
+    const text = String((quote && quote.quote) || "").trim();
+    if (!text) continue;
+    const stamp = String((quote && quote.timestamp) || "").trim();
+    quoteLines.push(`- ${stamp ? `[${stamp}] ` : ""}${text}`);
+  }
+  if (quoteLines.length) {
+    parts.push(`金句：\n${quoteLines.join("\n")}`);
+  }
+
+  const moments = Array.isArray(analysis.keyMoments)
+    ? analysis.keyMoments
+    : [];
+  const momentLabels = moments
+    .map((value) =>
+      typeof value === "number"
+        ? formatChatClock(value)
+        : String(value || "").trim(),
+    )
     .filter(Boolean)
-    .slice(0, 10);
-  return titles.join("；").slice(0, 2000);
+    .slice(0, CHAT_ANALYSIS_MOMENT_LIMIT);
+  if (momentLabels.length) {
+    parts.push(`关键节点：${momentLabels.join("、")}`);
+  }
+
+  return parts.join("\n\n").slice(0, CHAT_ANALYSIS_CONTEXT_MAX_CHARS);
 }
 
 function handleChatInputKeydown(event) {
@@ -2607,7 +2663,7 @@ async function sendChatMessage() {
       transcriptText: chatContextTranscript,
       videoDuration: chatVideoDuration,
       videoUrl: chatVideoUrl || canonicalVideoUrl(chatVideoId),
-      analysisSummary: chatAnalysisSummary(),
+      analysisContext: chatAnalysisContext(),
       // The background appends the current question itself, so the history
       // must stop at the previous turn or the question would be sent twice.
       messages: chatMessages.slice(0, -1).map((message) => ({

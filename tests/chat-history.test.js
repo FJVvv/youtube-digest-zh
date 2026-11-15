@@ -172,7 +172,7 @@ test("chatAsk sends the prior turns only and the new context fields", () => {
   assert.match(js, /messages: chatMessages\.slice\(0, -1\)\.map\(/);
   assert.match(js, /videoDuration: chatVideoDuration/);
   assert.match(js, /videoUrl: chatVideoUrl \|\| canonicalVideoUrl\(chatVideoId\)/);
-  assert.match(js, /analysisSummary: chatAnalysisSummary\(\)/);
+  assert.match(js, /analysisContext: chatAnalysisContext\(\)/);
   assert.match(js, /await openChatConversation\(videoId, videoUrl\)/);
   assert.match(js, /await refreshChatContext\(\)/);
 });

@@ -16,6 +16,13 @@ YouTube Digest is a bring-your-own-key project installed locally from GitHub. It
 
 ![YouTube Digest demo](YouTube%20Digest%20demo.png)
 
+## New in v1.6.0
+
+- Chat now thinks before it answers. On the official DeepSeek endpoint the conversation enables step-by-step reasoning, so answers explain why and how instead of restating the captions. This is slower on purpose; other OpenAI-compatible endpoints keep their normal behavior, with an automatic fallback if the endpoint rejects the field.
+- The chat prompt is no longer a template. It reuses the Overview (chapter summaries, key quotes, key moments), asks the model to locate the relevant transcript first, cite evidence with [M:SS], label background knowledge and inferences, and say so when the captions do not cover a question.
+- Long videos work better. Up to 100,000 characters of transcript are considered, and the assistant selects the transcript passages around words from your question instead of only keeping the opening and the ending. Answers can use up to 4,096 output tokens.
+- Thinking now shows as **Deep thinking...** and updates after a few seconds, so the panel never looks stuck.
+
 ## New in v1.5.0
 
 - Chat answers are more concise and easier to scan: a direct answer first, then short bold points, with at most one clickable [M:SS] timestamp per point instead of timestamp ranges. The output budget is 2,048 tokens.

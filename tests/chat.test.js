@@ -180,7 +180,7 @@ test("chat answers use the configured model and include the transcript", async (
   );
 });
 
-test("chat system prompt carries the duration, URL and prior summary", async () => {
+test("chat system prompt carries the duration, URL and the overview context", async () => {
   const requests = [];
   const helpers = loadBackgroundHelpers({
     fetchImpl: promptFileFetch(async (_url, options) => {
@@ -202,7 +202,7 @@ test("chat system prompt carries the duration, URL and prior summary", async () 
     videoDescription: "A description.",
     videoDuration: 754,
     videoUrl: "https://www.youtube.com/watch?v=abc123def45",
-    analysisSummary: "这段视频讲解了如何处理幂等重试。",
+    analysisContext: "章节：\n[0:00] 开场：介绍问题\n[4:12] 结论：幂等重试",
     messages: [],
     question: "重点是什么？",
   });
@@ -212,9 +212,93 @@ test("chat system prompt carries the duration, URL and prior summary", async () 
   assert.equal(systemMessage.role, "system");
   assert.match(systemMessage.content, /12:34/);
   assert.match(systemMessage.content, /https:\/\/www\.youtube\.com\/watch\?v=abc123def45/);
-  assert.match(systemMessage.content, /这段视频讲解了如何处理幂等重试。/);
+  assert.match(systemMessage.content, /章节：/);
+  assert.match(systemMessage.content, /幂等重试/);
   assert.equal(helpers.formatVideoDurationForChat(754), "12:34");
   assert.equal(helpers.formatVideoDurationForChat(""), "Unknown");
+});
+
+test("chat gives the model reasoning room on the official endpoint", async () => {
+  const officialRequests = [];
+  const official = loadBackgroundHelpers({
+    fetchImpl: promptFileFetch(async (_url, options) => {
+      officialRequests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "这是回答。" } }],
+        }),
+      };
+    }),
+  });
+  await official.handleChatAsk({
+    transcriptText: "[0:00] Hello there",
+    videoTitle: "Test Video",
+    channelName: "Test Channel",
+    videoDescription: "",
+    messages: [],
+    question: "讲了什么？",
+  });
+  assert.deepEqual(officialRequests[0].thinking, { type: "enabled" });
+
+  const customRequests = [];
+  const custom = loadBackgroundHelpers({
+    settings: {
+      provider: "deepseek",
+      aiApiKey: "test-key",
+      aiBaseUrl: "https://api.example.com/v1",
+      aiModel: "ds1017",
+      transcriptSource: "auto",
+    },
+    fetchImpl: promptFileFetch(async (_url, options) => {
+      customRequests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "这是回答。" } }],
+        }),
+      };
+    }),
+  });
+  await custom.handleChatAsk({
+    transcriptText: "[0:00] Hello there",
+    videoTitle: "Test Video",
+    channelName: "Test Channel",
+    videoDescription: "",
+    messages: [],
+    question: "讲了什么？",
+  });
+  assert.equal(Object.hasOwn(customRequests[0], "thinking"), false);
+});
+
+test("long transcripts keep the passages around words from the question", () => {
+  const helpers = loadBackgroundHelpers({});
+  const lines = [];
+  for (let index = 0; index < 4000; index += 1) {
+    const stamp = `${Math.floor(index / 60)}:${String(index % 60).padStart(2, "0")}`;
+    const text =
+      index === 1800
+        ? "this part explains quantum computing in detail"
+        : `filler line ${index} about something unrelated`;
+    lines.push(`[${stamp}] ${text}`);
+  }
+  const transcript = lines.join("\n");
+
+  const selected = helpers.selectTranscriptForChat(
+    transcript,
+    "quantum computing 是怎么实现的？",
+    12_000,
+  );
+
+  assert.ok(selected.length < transcript.length);
+  assert.match(selected, /quantum computing in detail/);
+  assert.match(selected, /中间部分因长度限制已省略/);
+  // Playback order is preserved: the matching line stays after the opening.
+  assert.ok(
+    selected.indexOf("[0:00]") < selected.indexOf("quantum computing"),
+  );
 });
 
 test("chat does not repeat the pending question when history already ends with it", async () => {
@@ -276,7 +360,7 @@ test("chat truncates an oversized transcript with the explicit marker", async ()
     }),
   });
 
-  const hugeTranscript = `${"A".repeat(50_000)}${"B".repeat(50_000)}`;
+  const hugeTranscript = `${"A".repeat(70_000)}${"B".repeat(70_000)}`;
   const result = await helpers.handleChatAsk({
     transcriptText: hugeTranscript,
     videoTitle: "Test Video",
@@ -296,7 +380,7 @@ test("chat truncates an oversized transcript with the explicit marker", async ()
   );
 });
 
-test("chat requests use the 2048 max_tokens budget and 0.6 temperature", async () => {
+test("chat requests use the 4096 max_tokens budget and 0.6 temperature", async () => {
   const requests = [];
   const helpers = loadBackgroundHelpers({
     fetchImpl: promptFileFetch(async (_url, options) => {
@@ -321,7 +405,7 @@ test("chat requests use the 2048 max_tokens budget and 0.6 temperature", async (
   });
 
   assert.equal(result.success, true);
-  assert.equal(requests[0].max_tokens, 2048);
+  assert.equal(requests[0].max_tokens, 4096);
   assert.equal(requests[0].temperature, 0.6);
 });
 

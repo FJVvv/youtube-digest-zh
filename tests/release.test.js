@@ -20,7 +20,7 @@ test("manifest uses minimized install-time permissions", () => {
     "http://*/*",
     "https://*/*",
   ]);
-  assert.equal(manifest.version, "1.5.0");
+  assert.equal(manifest.version, "1.6.0");
   assert.deepEqual(
     manifest.content_scripts.map((entry) => entry.js),
     [["caption-capture.js"], ["content.js"]],
@@ -181,6 +181,13 @@ test("release copy documents current scope without em dashes", () => {
   assert.doesNotMatch(customizationPrompt, /Documents|USERPROFILE/);
 
   assert.match(readme, /^## Remix it with your coding agent$/m);
+  assert.match(readme, /^## New in v1\.6\.0$/m);
+  assert.match(readme, /step-by-step reasoning/i);
+  assert.match(readme, /reuses the Overview/i);
+  assert.match(readme, /selects the transcript passages/i);
+  assert.match(chineseReadme, /^## v1\.6\.0 更新$/m);
+  assert.match(chineseReadme, /深度思考/);
+  assert.match(chineseReadme, /复用概览/);
   assert.match(readme, /^## New in v1\.5\.0$/m);
   assert.match(readme, /Free YouTube captions only/i);
   assert.match(readme, /never calls Supadata and never spends a credit/i);
@@ -383,7 +390,7 @@ test("chat tab exposes saved history, reference link, suggestions, and thinking 
     "chatThinking",
     "videoDuration",
     "videoUrl",
-    "analysisSummary",
+    "analysisContext",
   ]) {
     assert.match(js, new RegExp(token), token);
   }

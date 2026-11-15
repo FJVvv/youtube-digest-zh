@@ -85,11 +85,15 @@ function isOfficialDeepSeekEndpoint(baseUrl) {
  * Builds the OpenAI-compatible chat payload for one provider.
  * DeepSeek-specific fields are attached only when requested, because other
  * OpenAI-compatible services reject unknown request fields with HTTP 400.
+ *
+ * `thinking` controls DeepSeek's reasoning toggle: most product features want
+ * "disabled" for bounded latency, while the video chat uses "enabled" because
+ * analysis quality matters more than speed there.
  */
 function buildAiRequestBody(
   settings,
   { messages, maxTokens, temperature, responseFormat },
-  { includeProviderExtensions = true } = {},
+  { includeProviderExtensions = true, thinking = "disabled" } = {},
 ) {
   const body = {
     model: settings.aiModel,
@@ -100,10 +104,8 @@ function buildAiRequestBody(
   if (responseFormat) {
     body.response_format = responseFormat;
   }
-  // Product features need bounded, predictable latency rather than reasoning
-  // traces.
   if (includeProviderExtensions) {
-    body.thinking = { type: "disabled" };
+    body.thinking = { type: thinking === "enabled" ? "enabled" : "disabled" };
   }
   return body;
 }
@@ -183,6 +185,7 @@ async function requestAiCompletion({
   maxTokens,
   temperature,
   responseFormat,
+  thinking = "disabled",
 }) {
   const settings = await getSettings();
   if (!settings.aiApiKey) {
@@ -197,32 +200,46 @@ async function requestAiCompletion({
     ? YTD_SETTINGS.isOfficialDeepSeekBase(settings.aiBaseUrl)
     : isOfficialDeepSeekEndpoint(settings.aiBaseUrl);
   const url = YTD_SETTINGS.chatCompletionsUrl(settings.aiBaseUrl);
-  const options = { messages, maxTokens, temperature, responseFormat };
+  const options = { messages, maxTokens, temperature, responseFormat, thinking };
 
   let attempt = await postChatCompletion({
     url,
     apiKey: settings.aiApiKey,
     body: buildAiRequestBody(settings, options, {
       includeProviderExtensions: isOfficialDeepSeek,
+      thinking,
     }),
   });
 
   // OpenAI-compatible providers differ in which request fields they accept.
-  // Retry once without the optional extensions before surfacing the error.
+  // The official DeepSeek endpoint can also reject `thinking` for model aliases
+  // that do not support reasoning. Retry once with the optional fields removed
+  // before surfacing the error.
   if (
     !attempt.response.ok &&
-    !isOfficialDeepSeek &&
     (attempt.response.status === 400 || attempt.response.status === 422)
   ) {
-    attempt = await postChatCompletion({
-      url,
-      apiKey: settings.aiApiKey,
-      body: buildAiRequestBody(
-        settings,
-        { ...options, responseFormat: undefined },
-        { includeProviderExtensions: false },
-      ),
-    });
+    if (!isOfficialDeepSeek) {
+      attempt = await postChatCompletion({
+        url,
+        apiKey: settings.aiApiKey,
+        body: buildAiRequestBody(
+          settings,
+          { ...options, responseFormat: undefined },
+          { includeProviderExtensions: false },
+        ),
+      });
+    } else if (thinking === "enabled") {
+      attempt = await postChatCompletion({
+        url,
+        apiKey: settings.aiApiKey,
+        body: buildAiRequestBody(
+          settings,
+          { ...options, thinking: "disabled" },
+          { includeProviderExtensions: true, thinking: "disabled" },
+        ),
+      });
+    }
   }
 
   if (!attempt.response.ok) {
@@ -438,6 +455,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       videoDescription: message.videoDescription,
       videoDuration: message.videoDuration,
       videoUrl: message.videoUrl,
+      analysisContext: message.analysisContext,
       analysisSummary: message.analysisSummary,
       messages: message.messages,
       question: message.question,
@@ -1973,9 +1991,9 @@ async function callAiTranslation(
 // VIDEO CHAT
 // ============================================================
 
-const CHAT_TRANSCRIPT_MAX_CHARS = 60_000;
+const CHAT_TRANSCRIPT_MAX_CHARS = 100_000;
 const CHAT_HISTORY_MAX_MESSAGES = 24;
-const CHAT_MAX_TOKENS = 2_048;
+const CHAT_MAX_TOKENS = 4_096;
 
 /**
  * Renders the video length as M:SS for the prompt. The side panel normally
@@ -2018,6 +2036,150 @@ function truncateTranscriptForChat(
 }
 
 /**
+ * Pulls the meaningful words out of a question so a long transcript can be
+ * reduced to the passages that actually matter. English words are used as-is;
+ * Chinese runs are split into bigrams because the transcript is usually
+ * English while the question is usually Chinese.
+ */
+function extractChatQueryTerms(question) {
+  const stopWords = new Set([
+    "about",
+    "after",
+    "again",
+    "also",
+    "because",
+    "been",
+    "being",
+    "could",
+    "does",
+    "from",
+    "have",
+    "just",
+    "like",
+    "more",
+    "should",
+    "than",
+    "that",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "video",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "will",
+    "with",
+    "would",
+    "your",
+  ]);
+  const raw = String(question || "").toLowerCase();
+  const terms = new Set();
+  for (const word of raw.match(/[a-z0-9][a-z0-9'-]{2,}/g) || []) {
+    if (!stopWords.has(word)) terms.add(word);
+  }
+  for (const run of raw.match(/[\u4e00-\u9fff]+/g) || []) {
+    if (run.length <= 2) {
+      terms.add(run);
+      continue;
+    }
+    for (let index = 0; index + 2 <= run.length; index += 1) {
+      terms.add(run.slice(index, index + 2));
+    }
+  }
+  return [...terms];
+}
+
+/**
+ * Prepares the transcript for one chat turn. Short transcripts are sent
+ * unchanged; long ones keep the opening and the conclusion and add the
+ * passages around words from the current question, in playback order.
+ */
+function selectTranscriptForChat(
+  transcriptText,
+  question,
+  maxChars = CHAT_TRANSCRIPT_MAX_CHARS,
+) {
+  const text = String(transcriptText || "").trim();
+  if (text.length <= maxChars) return text;
+
+  const lines = text.split("\n").filter((line) => line.trim());
+  if (lines.length < 40) return truncateTranscriptForChat(text, maxChars);
+
+  const terms = extractChatQueryTerms(question);
+  if (!terms.length) return truncateTranscriptForChat(text, maxChars);
+
+  const selected = new Set();
+  let used = 0;
+  const canAdd = (index) => {
+    const cost = lines[index].length + 1;
+    if (used + cost > maxChars) return false;
+    selected.add(index);
+    used += cost;
+    return true;
+  };
+
+  const headBudget = Math.floor(maxChars * 0.15);
+  let headUsed = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const cost = lines[index].length + 1;
+    if (headUsed + cost > headBudget) break;
+    selected.add(index);
+    headUsed += cost;
+  }
+  used = headUsed;
+
+  let tailUsed = 0;
+  const tailBudget = Math.floor(maxChars * 0.1);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const cost = lines[index].length + 1;
+    if (tailUsed + cost > tailBudget) break;
+    selected.add(index);
+    tailUsed += cost;
+  }
+  used += tailUsed;
+
+  const scores = lines.map((line) => {
+    const lower = line.toLowerCase();
+    let score = 0;
+    for (const term of terms) {
+      if (lower.includes(term)) score += term.length >= 4 ? 2 : 1;
+    }
+    return score;
+  });
+  const ranked = lines
+    .map((_, index) => index)
+    .filter((index) => scores[index] > 0 && !selected.has(index))
+    .sort((a, b) => scores[b] - scores[a]);
+  for (const index of ranked) {
+    if (used >= maxChars) break;
+    for (let offset = -8; offset <= 8; offset += 1) {
+      const neighbour = index + offset;
+      if (neighbour < 0 || neighbour >= lines.length) continue;
+      if (selected.has(neighbour)) continue;
+      if (!canAdd(neighbour)) break;
+    }
+  }
+
+  let output = "";
+  let previous = -2;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!selected.has(index)) continue;
+    if (previous >= 0 && index !== previous + 1) {
+      output += "\n[中间部分因长度限制已省略]\n";
+    }
+    output += `${lines[index]}\n`;
+    previous = index;
+  }
+  return output.trim();
+}
+
+/**
  * Keeps only well-formed user/assistant turns and caps how much history is
  * resent with each question.
  */
@@ -2051,6 +2213,7 @@ async function handleChatAsk({
   videoDescription,
   videoDuration,
   videoUrl,
+  analysisContext,
   analysisSummary,
   messages,
   question,
@@ -2074,7 +2237,10 @@ async function handleChatAsk({
       };
     }
 
-    const transcript = truncateTranscriptForChat(transcriptText);
+    const transcript = selectTranscriptForChat(
+      transcriptText,
+      trimmedQuestion,
+    );
     if (!transcript) {
       return {
         success: false,
@@ -2083,13 +2249,14 @@ async function handleChatAsk({
       };
     }
 
+    const analysis = String(analysisContext ?? analysisSummary ?? "").trim();
     const promptVariables = {
       videoTitle: videoTitle || "Unknown",
       channelName: channelName || "Unknown",
       videoDuration: formatVideoDurationForChat(videoDuration),
       videoUrl: String(videoUrl || "").trim() || "Unknown",
       videoDescription: videoDescription || "No description available",
-      analysisSummary: String(analysisSummary || "").trim() || "（无）",
+      analysisContext: analysis || "（无）",
       transcriptText: transcript,
     };
     const systemPrompt = await loadPromptSection(
@@ -2117,6 +2284,7 @@ async function handleChatAsk({
     const { text } = await requestAiCompletion({
       maxTokens: CHAT_MAX_TOKENS,
       temperature: 0.6,
+      thinking: "enabled",
       messages: [
         { role: "system", content: systemPrompt },
         ...history,
@@ -2235,6 +2403,8 @@ globalThis.__YTD_TRANSLATION_TESTING__ = {
   resolveTranscriptSource,
   formatYouTubeCues,
   truncateTranscriptForChat,
+  selectTranscriptForChat,
+  extractChatQueryTerms,
   formatVideoDurationForChat,
   CHAT_TRANSCRIPT_MAX_CHARS,
   CHAT_HISTORY_MAX_MESSAGES,
