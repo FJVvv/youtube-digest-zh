@@ -139,6 +139,37 @@
             example ds1017).
           </p>
 
+          <fieldset class="radio-group">
+            <legend data-i18n="chatEffortLegend">Chat reasoning effort</legend>
+            <label class="radio-option">
+              <input type="radio" name="chatReasoningEffort" value="low" />
+              <span data-i18n="chatEffortLow">Fast (low)</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="chatReasoningEffort" value="high" />
+              <span data-i18n="chatEffortHigh">Standard (high, default)</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="chatReasoningEffort" value="max" />
+              <span data-i18n="chatEffortMax">Deep (max, slower)</span>
+            </label>
+          </fieldset>
+          <p class="help" data-i18n="chatEffortHelp">
+            Applies to the Chat tab, on the official DeepSeek endpoint only.
+          </p>
+
+          <label class="checkbox-option">
+            <input id="chatWebSearch" name="chatWebSearch" type="checkbox" />
+            <span data-i18n="chatWebSearchLabel"
+              >Let chat search the web</span
+            >
+          </label>
+          <p class="help" data-i18n="chatWebSearchHelp">
+            On the official DeepSeek endpoint the model may search the web to
+            verify facts and will list its sources. DeepSeek bills searches
+            separately.
+          </p>
+
           <label for="aiApiKey" data-i18n="deepseekApiKeyLabel"
             >DeepSeek API key</label
           >

@@ -1687,7 +1687,11 @@ function buildChatRecord({
     const content = String(
       message.content == null ? "" : message.content,
     ).slice(0, CHAT_MAX_MESSAGE_CHARS);
-    clipped.push({ role, content });
+    const citations = normalizeChatCitations(message.citations);
+    const entry = { role, content };
+    if (citations.length) entry.citations = citations;
+    if (message.truncated) entry.truncated = true;
+    clipped.push(entry);
   });
   return {
     videoId: String(videoId || ""),
@@ -1741,6 +1745,13 @@ function formatChatExport(record) {
     if (!message) return;
     const role = message.role === "assistant" ? "AI" : "我";
     lines.push(`[${role}] ${message.content}`);
+    const citations = normalizeChatCitations(message.citations);
+    if (citations.length) {
+      lines.push("来源：");
+      citations.forEach((citation) => {
+        lines.push(`- ${citation.title || citation.url} ${citation.url}`);
+      });
+    }
     lines.push("");
   });
   return `${lines.join("\n").trimEnd()}\n`;
@@ -2206,6 +2217,60 @@ async function handleChatTimestampClick(event) {
 }
 
 /**
+ * Keeps the web sources that the official DeepSeek endpoint attaches to an
+ * answer (annotations[].url_citation). Other endpoints return nothing, and a
+ * saved conversation may carry an older shape, so everything is validated.
+ */
+function normalizeChatCitations(citations) {
+  if (!Array.isArray(citations)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const citation of citations) {
+    if (!citation || typeof citation !== "object") continue;
+    const url = typeof citation.url === "string" ? citation.url.trim() : "";
+    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    result.push({
+      url,
+      title:
+        typeof citation.title === "string" && citation.title.trim()
+          ? citation.title.trim().slice(0, 200)
+          : url,
+    });
+    if (result.length >= 12) break;
+  }
+  return result;
+}
+
+/**
+ * Renders the source list under an answer. Links open in a normal browser tab;
+ * the extension runs no remote code and the link text is never HTML.
+ */
+function buildChatSources(citations) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "chat-sources";
+  const label = document.createElement("div");
+  label.className = "chat-sources-label";
+  label.textContent = "来源";
+  const list = document.createElement("ul");
+  list.className = "chat-sources-list";
+  citations.forEach((citation) => {
+    const item = document.createElement("li");
+    const link = document.createElement("a");
+    link.className = "chat-source-link";
+    link.href = citation.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.title = citation.url;
+    link.textContent = citation.title || citation.url;
+    item.appendChild(link);
+    list.appendChild(item);
+  });
+  wrapper.append(label, list);
+  return wrapper;
+}
+
+/**
  * Builds every bubble with textContent. Message text comes from the user and
  * from the model, so it must never be interpreted as HTML.
  */
@@ -2244,6 +2309,17 @@ function renderChatMessages() {
     }
 
     bubble.append(label, text);
+    if (isAssistant) {
+      const citations = normalizeChatCitations(message.citations);
+      if (citations.length) bubble.appendChild(buildChatSources(citations));
+      if (message.truncated) {
+        const note = document.createElement("div");
+        note.className = "chat-truncation-note";
+        note.textContent =
+          "回答达到长度上限，可能被截断；可以把问题问得更具体后重试。";
+        bubble.appendChild(note);
+      }
+    }
     container.appendChild(bubble);
   });
 
@@ -2290,6 +2366,7 @@ async function openChatConversation(videoId, videoUrl, fromHistory = false) {
       chatMessages = record.messages.map((message) => ({
         role: message.role === "assistant" ? "assistant" : "user",
         content: String(message.content || ""),
+        citations: normalizeChatCitations(message.citations),
       }));
       chatVideoId = record.videoId || chatVideoId;
       chatVideoUrl = record.videoUrl || chatVideoUrl;
@@ -2382,7 +2459,7 @@ function showChatThinking() {
     const text = document.createElement("span");
     text.className = "chat-thinking-text";
     text.id = "chatThinkingText";
-    text.textContent = "正在深度思考…";
+    text.textContent = "正在深度思考（可能联网检索）…";
     body.append(dots, text);
     bubble.append(label, body);
   }
@@ -2391,13 +2468,13 @@ function showChatThinking() {
   container.appendChild(bubble);
   bubble.hidden = false;
   const text = bubble.querySelector(".chat-thinking-text");
-  if (text) text.textContent = "正在深度思考…";
+  if (text) text.textContent = "正在深度思考（可能联网检索）…";
 
   const empty = document.getElementById("chatEmpty");
   if (empty) empty.style.display = "none";
   chatThinkingTimer = setTimeout(() => {
     if (!text || !text.isConnected) return;
-    text.textContent = "仍在深度思考，长视频可能需要更久…";
+    text.textContent = "仍在深度思考或检索资料，长视频和联网搜索可能需要更久…";
   }, 8000);
   scrollChatToBottom();
 }
@@ -2678,7 +2755,12 @@ async function sendChatMessage() {
     if (chatVideoId !== requestChatVideoId) return;
 
     if (result && result.success && result.answer) {
-      chatMessages.push({ role: "assistant", content: result.answer });
+      chatMessages.push({
+        role: "assistant",
+        content: result.answer,
+        citations: normalizeChatCitations(result.citations),
+        truncated: !!result.truncated,
+      });
       renderChatMessages();
       await saveChatConversation();
     } else {

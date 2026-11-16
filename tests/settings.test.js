@@ -10,6 +10,8 @@ test("DeepSeek defaults stay the default configuration", () => {
   assert.equal(normalized.aiBaseUrl, "https://api.deepseek.com");
   assert.equal(normalized.aiModel, "deepseek-v4-flash");
   assert.equal(normalized.transcriptSource, "auto");
+  assert.equal(normalized.chatReasoningEffort, "high");
+  assert.equal(normalized.chatWebSearch, true);
   assert.equal(normalized.aiApiKey, "");
   assert.equal(normalized.supadataApiKey, "");
   assert.equal(
@@ -62,6 +64,23 @@ test("invalid AI settings fall back to safe defaults", () => {
   assert.equal(longModel.aiModel, settings.DEFAULTS.aiModel);
   const maxModel = settings.normalize({ aiModel: "m".repeat(120) });
   assert.equal(maxModel.aiModel, "m".repeat(120));
+
+  const chatTuning = settings.normalize({
+    chatReasoningEffort: "max",
+    chatWebSearch: false,
+  });
+  assert.equal(chatTuning.chatReasoningEffort, "max");
+  assert.equal(chatTuning.chatWebSearch, false);
+
+  const unknownEffort = settings.normalize({
+    chatReasoningEffort: "ultra",
+    chatWebSearch: "yes",
+  });
+  assert.equal(unknownEffort.chatReasoningEffort, "high");
+  assert.equal(unknownEffort.chatWebSearch, true);
+
+  const lowEffort = settings.normalize({ chatReasoningEffort: "low" });
+  assert.equal(lowEffort.chatReasoningEffort, "low");
 });
 
 test("official DeepSeek endpoint detection is exact", () => {

@@ -16,6 +16,13 @@ YouTube Digest is a bring-your-own-key project installed locally from GitHub. It
 
 ![YouTube Digest demo](YouTube%20Digest%20demo.png)
 
+## New in v1.6.1
+
+- Chat can now search the web on the official DeepSeek endpoint. When the captions do not cover a version, a date, or a public fact, the model can look it up and lists its sources under the answer. Search and page fetches are billed separately by DeepSeek; turn **Let chat search the web** off in Settings if you do not want them.
+- Choose how hard chat thinks: **Fast (low)**, **Standard (high, default)**, or **Deep (max, slower)**. The reasoning effort setting applies on the official DeepSeek endpoint only.
+- Answers get more room. The chat budget rises from 2,048 to 32,768 output tokens, so reasoning plus a source-verified answer no longer get cut off, and chat waits longer before timing out.
+- If an answer still reaches the length limit, the panel says it may be truncated and suggests asking a more specific question.
+
 ## New in v1.6.0
 
 - Chat now thinks before it answers. On the official DeepSeek endpoint the conversation enables step-by-step reasoning, so answers explain why and how instead of restating the captions. This is slower on purpose; other OpenAI-compatible endpoints keep their normal behavior, with an automatic fallback if the endpoint rejects the field.

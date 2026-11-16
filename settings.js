@@ -13,9 +13,12 @@ var YTD_SETTINGS = (() => {
     aiModel: "deepseek-v4-flash",
     supadataApiKey: "",
     transcriptSource: "auto",
+    chatReasoningEffort: "high",
+    chatWebSearch: true,
   });
 
   const TRANSCRIPT_SOURCES = new Set(["auto", "youtube", "supadata"]);
+  const CHAT_REASONING_EFFORTS = new Set(["low", "high", "max"]);
 
   function isLegacyCustom(input) {
     return !!input && input.provider === "custom";
@@ -47,6 +50,16 @@ var YTD_SETTINGS = (() => {
     return TRANSCRIPT_SOURCES.has(value) ? value : DEFAULTS.transcriptSource;
   }
 
+  function normalizeChatReasoningEffort(value) {
+    return CHAT_REASONING_EFFORTS.has(value)
+      ? value
+      : DEFAULTS.chatReasoningEffort;
+  }
+
+  function normalizeChatWebSearch(value) {
+    return value === false ? false : DEFAULTS.chatWebSearch;
+  }
+
   function normalize(input = {}) {
     const legacyCustom = isLegacyCustom(input);
     return {
@@ -67,6 +80,10 @@ var YTD_SETTINGS = (() => {
           ? input.supadataApiKey.trim()
           : "",
       transcriptSource: normalizeTranscriptSource(input.transcriptSource),
+      chatReasoningEffort: normalizeChatReasoningEffort(
+        input.chatReasoningEffort,
+      ),
+      chatWebSearch: normalizeChatWebSearch(input.chatWebSearch),
     };
   }
 
@@ -103,6 +120,8 @@ var YTD_SETTINGS = (() => {
     isLegacyCustom,
     normalize,
     normalizeBaseUrl,
+    normalizeChatReasoningEffort,
+    normalizeChatWebSearch,
     migrateLegacyCustom,
     chatCompletionsUrl,
     isOfficialDeepSeekBase,

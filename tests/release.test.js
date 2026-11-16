@@ -20,7 +20,7 @@ test("manifest uses minimized install-time permissions", () => {
     "http://*/*",
     "https://*/*",
   ]);
-  assert.equal(manifest.version, "1.6.0");
+  assert.equal(manifest.version, "1.6.1");
   assert.deepEqual(
     manifest.content_scripts.map((entry) => entry.js),
     [["caption-capture.js"], ["content.js"]],
@@ -149,6 +149,11 @@ test("release copy documents current scope without em dashes", () => {
   }
   assert.match(optionsPage, /name="transcriptSource"/);
   assert.match(optionsPage, /value="youtube"/);
+  assert.match(optionsPage, /name="chatReasoningEffort"/);
+  assert.match(optionsPage, /value="max"/);
+  assert.match(optionsPage, /id="chatWebSearch"/);
+  assert.match(optionsScript, /chatReasoningEffort/);
+  assert.match(optionsScript, /chatWebSearch/);
   const detailsTag = optionsPage.match(
     /<details\b[^>]*class="card customization-card"[^>]*>/,
   );
@@ -181,6 +186,18 @@ test("release copy documents current scope without em dashes", () => {
   assert.doesNotMatch(customizationPrompt, /Documents|USERPROFILE/);
 
   assert.match(readme, /^## Remix it with your coding agent$/m);
+  assert.match(readme, /^## New in v1\.6\.1$/m);
+  assert.match(readme, /search the web/i);
+  assert.match(readme, /lists its sources/i);
+  assert.match(readme, /reasoning effort/i);
+  assert.match(readme, /Fast \(low\)/);
+  assert.match(readme, /32,768 output tokens/i);
+  assert.match(readme, /billed separately by DeepSeek/i);
+  assert.match(chineseReadme, /^## v1\.6\.1 更新$/m);
+  assert.match(chineseReadme, /联网搜索/);
+  assert.match(chineseReadme, /思考强度/);
+  assert.match(chineseReadme, /32768/);
+  assert.match(chineseReadme, /来源/);
   assert.match(readme, /^## New in v1\.6\.0$/m);
   assert.match(readme, /step-by-step reasoning/i);
   assert.match(readme, /reuses the Overview/i);

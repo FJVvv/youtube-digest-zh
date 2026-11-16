@@ -157,6 +157,45 @@ test("formatChatExport includes the clickable video link line", () => {
   assert.match(text, /\[AI\] 讲了三个观点。/);
 });
 
+test("chat records keep web citations and the export lists the sources", () => {
+  const { testing } = loadPanel();
+  const record = testing.buildChatRecord({
+    videoId: "dQw4w9WgXcQ",
+    videoTitle: "测试视频",
+    messages: [
+      { role: "user", content: "V4.1 什么时候发布？" },
+      {
+        role: "assistant",
+        content: "2026 年 10 月。",
+        citations: [
+          {
+            url: "https://api-docs.deepseek.com/news/2026/10/17/v4.1",
+            title: "DeepSeek-V4.1-Flash-1017",
+          },
+          { url: "javascript:alert(1)", title: "bad" },
+        ],
+        truncated: true,
+      },
+    ],
+    now: 99,
+  });
+
+  assert.equal(record.messages[1].citations.length, 1);
+  assert.equal(
+    record.messages[1].citations[0].url,
+    "https://api-docs.deepseek.com/news/2026/10/17/v4.1",
+  );
+  assert.equal(record.messages[1].truncated, true);
+
+  const text = testing.formatChatExport(record);
+  assert.match(text, /\[AI\] 2026 年 10 月。/);
+  assert.match(text, /来源：/);
+  assert.match(
+    text,
+    /- DeepSeek-V4\.1-Flash-1017 https:\/\/api-docs\.deepseek\.com/,
+  );
+});
+
 test("sanitizeFilename keeps Chinese characters and falls back to untitled", () => {
   const { testing } = loadPanel();
 

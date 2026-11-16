@@ -35,6 +35,15 @@ const YTD_OPTIONS = (() => {
       aiModelPlaceholder: "deepseek-v4-flash",
       aiModelHelp:
         "Enter a DeepSeek official model name (for example deepseek-v4-flash, deepseek-flash, or deepseek-v4-pro), or your own model name (for example ds1017).",
+      chatEffortLegend: "Chat reasoning effort",
+      chatEffortLow: "Fast (low)",
+      chatEffortHigh: "Standard (high, default)",
+      chatEffortMax: "Deep (max, slower)",
+      chatEffortHelp:
+        "Applies to the Chat tab, on the official DeepSeek endpoint only.",
+      chatWebSearchLabel: "Let chat search the web",
+      chatWebSearchHelp:
+        "On the official DeepSeek endpoint the model may search the web to verify facts and will list its sources. DeepSeek bills searches separately.",
       deepseekApiKeyLabel: "DeepSeek API key",
       deepseekApiKeyPlaceholder: "Paste your DeepSeek key",
       deepseekHelp:
@@ -133,6 +142,15 @@ const YTD_OPTIONS = (() => {
       aiModelLabel: "模型名称",
       aiModelPlaceholder: "deepseek-v4-flash",
       aiModelHelp: "填 DeepSeek 官方模型名（如 deepseek-v4-flash、deepseek-flash、deepseek-v4-pro），或你自己的模型名（例如 ds1017）。",
+      chatEffortLegend: "对话思考强度",
+      chatEffortLow: "快速（low）",
+      chatEffortHigh: "标准（high，默认）",
+      chatEffortMax: "深入（max，更慢）",
+      chatEffortHelp:
+        "仅对「对话」标签生效，且仅在使用 DeepSeek 官方接口时可用。",
+      chatWebSearchLabel: "允许对话联网搜索",
+      chatWebSearchHelp:
+        "使用 DeepSeek 官方接口时，模型可以联网核实视频之外的事实，并在回答下列出来源；搜索由 DeepSeek 单独计费。",
       deepseekApiKeyLabel: "DeepSeek API 密钥",
       deepseekApiKeyPlaceholder: "粘贴你的 DeepSeek 密钥",
       deepseekHelp:
@@ -417,6 +435,10 @@ const YTD_OPTIONS = (() => {
     const transcriptSourceInputs = [
       ...doc.querySelectorAll('input[name="transcriptSource"]'),
     ];
+    const chatEffortInputs = [
+      ...doc.querySelectorAll('input[name="chatReasoningEffort"]'),
+    ];
+    const chatWebSearchInput = doc.getElementById("chatWebSearch");
     const testAiConnectionBtn = doc.getElementById("testAiConnectionBtn");
     const testAiConnectionStatus = doc.getElementById(
       "testAiConnectionStatus",
@@ -455,6 +477,31 @@ const YTD_OPTIONS = (() => {
       }
     }
 
+    function getChatReasoningEffort() {
+      const checked = chatEffortInputs.find((input) => input.checked);
+      return checked
+        ? checked.value
+        : settingsApi.DEFAULTS.chatReasoningEffort;
+    }
+
+    function setChatReasoningEffort(value) {
+      const effort = settingsApi.normalizeChatReasoningEffort
+        ? settingsApi.normalizeChatReasoningEffort(value)
+        : settingsApi.DEFAULTS.chatReasoningEffort;
+      for (const input of chatEffortInputs) {
+        input.checked = input.value === effort;
+      }
+    }
+
+    function getChatWebSearch() {
+      if (!chatWebSearchInput) return settingsApi.DEFAULTS.chatWebSearch;
+      return chatWebSearchInput.checked;
+    }
+
+    function setChatWebSearch(value) {
+      if (chatWebSearchInput) chatWebSearchInput.checked = value !== false;
+    }
+
     function collectSettings() {
       return settingsApi.normalize({
         provider: "deepseek",
@@ -463,6 +510,8 @@ const YTD_OPTIONS = (() => {
         aiModel: aiModelInput.value,
         supadataApiKey: supadataApiKeyInput.value,
         transcriptSource: getTranscriptSource(),
+        chatReasoningEffort: getChatReasoningEffort(),
+        chatWebSearch: getChatWebSearch(),
       });
     }
 
@@ -568,6 +617,8 @@ const YTD_OPTIONS = (() => {
         aiBaseUrlInput.value = settings.aiBaseUrl;
         supadataApiKeyInput.value = settings.supadataApiKey;
         setTranscriptSource(settings.transcriptSource);
+        setChatReasoningEffort(settings.chatReasoningEffort);
+        setChatWebSearch(settings.chatWebSearch);
         lastSavedBaseUrl = settings.aiBaseUrl;
         if (migration.migrated) {
           await storage.set({ [settingsApi.STORAGE_KEY]: settings });

@@ -1694,6 +1694,58 @@ body {
   outline-offset: 1px;
 }
 
+/* Web sources returned by the official DeepSeek search tool. */
+.chat-sources {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-sources-label {
+  margin-bottom: 4px;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.chat-sources-list {
+  margin: 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.chat-sources-list li {
+  margin: 2px 0;
+}
+
+.chat-source-link {
+  color: var(--accent);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
+.chat-source-link:hover {
+  color: var(--accent-hover);
+}
+
+.chat-source-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.chat-truncation-note {
+  margin-top: 8px;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .chat-error {
   align-self: stretch;
   padding: 10px 12px;

@@ -241,6 +241,10 @@ test("chat gives the model reasoning room on the official endpoint", async () =>
     question: "讲了什么？",
   });
   assert.deepEqual(officialRequests[0].thinking, { type: "enabled" });
+  assert.equal(officialRequests[0].reasoning_effort, "high");
+  assert.deepEqual(officialRequests[0].tools, [
+    { type: "deepseek_web_search" },
+  ]);
 
   const customRequests = [];
   const custom = loadBackgroundHelpers({
@@ -271,6 +275,108 @@ test("chat gives the model reasoning room on the official endpoint", async () =>
     question: "讲了什么？",
   });
   assert.equal(Object.hasOwn(customRequests[0], "thinking"), false);
+  assert.equal(Object.hasOwn(customRequests[0], "reasoning_effort"), false);
+  assert.equal(Object.hasOwn(customRequests[0], "tools"), false);
+});
+
+test("chat returns web citations and the truncation flag", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    fetchImpl: promptFileFetch(async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: "DeepSeek V4.1 发布于 2026 年 10 月。",
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url_citation: {
+                      url: "https://api-docs.deepseek.com/news/2026/10/17/v4.1",
+                      title: "DeepSeek-V4.1-Flash-1017",
+                    },
+                  },
+                  {
+                    type: "url_citation",
+                    url_citation: {
+                      url: "https://api-docs.deepseek.com/news/2026/10/17/v4.1",
+                      title: "duplicate",
+                    },
+                  },
+                  {
+                    type: "url_citation",
+                    url_citation: { url: "javascript:alert(1)", title: "bad" },
+                  },
+                ],
+              },
+              finish_reason: "length",
+            },
+          ],
+        }),
+      };
+    }),
+  });
+
+  const result = await helpers.handleChatAsk({
+    transcriptText: "[0:00] Hello there",
+    videoTitle: "Test Video",
+    channelName: "Test Channel",
+    videoDescription: "",
+    messages: [],
+    question: "DeepSeek V4.1 什么时候发布？",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.truncated, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.citations)), [
+    {
+      url: "https://api-docs.deepseek.com/news/2026/10/17/v4.1",
+      title: "DeepSeek-V4.1-Flash-1017",
+    },
+  ]);
+  assert.equal(requests[0].max_tokens, 32_768);
+});
+
+test("chat can turn web search off and keeps official reasoning settings", async () => {
+  const requests = [];
+  const helpers = loadBackgroundHelpers({
+    settings: {
+      provider: "deepseek",
+      aiApiKey: "test-key",
+      aiBaseUrl: "https://api.deepseek.com",
+      aiModel: "deepseek-v4-pro",
+      transcriptSource: "auto",
+      chatReasoningEffort: "max",
+      chatWebSearch: false,
+    },
+    fetchImpl: promptFileFetch(async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: "这是回答。" }, finish_reason: "stop" }],
+        }),
+      };
+    }),
+  });
+
+  const result = await helpers.handleChatAsk({
+    transcriptText: "[0:00] Hello there",
+    videoTitle: "Test Video",
+    channelName: "Test Channel",
+    videoDescription: "",
+    messages: [],
+    question: "讲了什么？",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(requests[0].reasoning_effort, "max");
+  assert.equal(Object.hasOwn(requests[0], "tools"), false);
 });
 
 test("long transcripts keep the passages around words from the question", () => {
@@ -380,7 +486,7 @@ test("chat truncates an oversized transcript with the explicit marker", async ()
   );
 });
 
-test("chat requests use the 4096 max_tokens budget and 0.6 temperature", async () => {
+test("chat requests use the 32768 max_tokens budget and 0.6 temperature", async () => {
   const requests = [];
   const helpers = loadBackgroundHelpers({
     fetchImpl: promptFileFetch(async (_url, options) => {
@@ -405,7 +511,7 @@ test("chat requests use the 4096 max_tokens budget and 0.6 temperature", async (
   });
 
   assert.equal(result.success, true);
-  assert.equal(requests[0].max_tokens, 4096);
+  assert.equal(requests[0].max_tokens, 32_768);
   assert.equal(requests[0].temperature, 0.6);
 });
 

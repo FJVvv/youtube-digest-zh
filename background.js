@@ -88,12 +88,20 @@ function isOfficialDeepSeekEndpoint(baseUrl) {
  *
  * `thinking` controls DeepSeek's reasoning toggle: most product features want
  * "disabled" for bounded latency, while the video chat uses "enabled" because
- * analysis quality matters more than speed there.
+ * analysis quality matters more than speed there. `reasoningEffort` and
+ * `tools` are DeepSeek-only request extensions: the official endpoint accepts
+ * `reasoning_effort` (low/high/max) and the server-side web tools, while most
+ * OpenAI-compatible endpoints reject them.
  */
 function buildAiRequestBody(
   settings,
   { messages, maxTokens, temperature, responseFormat },
-  { includeProviderExtensions = true, thinking = "disabled" } = {},
+  {
+    includeProviderExtensions = true,
+    thinking = "disabled",
+    reasoningEffort = "",
+    tools = null,
+  } = {},
 ) {
   const body = {
     model: settings.aiModel,
@@ -106,6 +114,8 @@ function buildAiRequestBody(
   }
   if (includeProviderExtensions) {
     body.thinking = { type: thinking === "enabled" ? "enabled" : "disabled" };
+    if (reasoningEffort) body.reasoning_effort = reasoningEffort;
+    if (Array.isArray(tools) && tools.length) body.tools = tools;
   }
   return body;
 }
@@ -115,7 +125,13 @@ function buildAiRequestBody(
  * Error responses are returned rather than thrown so callers can retry with a
  * simpler request shape when a provider rejects unsupported fields.
  */
-async function postChatCompletion({ url, apiKey, body }) {
+async function postChatCompletion({
+  url,
+  apiKey,
+  body,
+  idleTimeoutMs = AI_PROVIDER_IDLE_TIMEOUT_MS,
+  hardTimeoutMs = AI_PROVIDER_HARD_TIMEOUT_MS,
+}) {
   const controller = new AbortController();
   let timeoutKind = "";
   let idleTimeoutId;
@@ -127,16 +143,10 @@ async function postChatCompletion({ url, apiKey, body }) {
   };
   const resetIdleTimeout = () => {
     clearTimeout(idleTimeoutId);
-    idleTimeoutId = setTimeout(
-      () => abortForTimeout("idle"),
-      AI_PROVIDER_IDLE_TIMEOUT_MS,
-    );
+    idleTimeoutId = setTimeout(() => abortForTimeout("idle"), idleTimeoutMs);
   };
 
-  hardTimeoutId = setTimeout(
-    () => abortForTimeout("hard"),
-    AI_PROVIDER_HARD_TIMEOUT_MS,
-  );
+  hardTimeoutId = setTimeout(() => abortForTimeout("hard"), hardTimeoutMs);
   resetIdleTimeout();
   try {
     const response = await fetch(url, {
@@ -163,13 +173,19 @@ async function postChatCompletion({ url, apiKey, body }) {
     }
     return { response, data };
   } catch (error) {
+    const idleSeconds = Math.round(idleTimeoutMs / 1000);
+    const hardSeconds = Math.round(hardTimeoutMs / 1000);
     if (timeoutKind === "idle") {
-      const timeoutError = new Error("AI 请求已连续 50 秒无响应，请重试。");
+      const timeoutError = new Error(
+        `AI 请求已连续 ${idleSeconds} 秒无响应，请重试。`,
+      );
       timeoutError.code = "AI_IDLE_TIMEOUT";
       throw timeoutError;
     }
     if (timeoutKind === "hard") {
-      const timeoutError = new Error("AI 请求超过 120 秒上限，请重试。");
+      const timeoutError = new Error(
+        `AI 请求超过 ${hardSeconds} 秒上限，请重试。`,
+      );
       timeoutError.code = "AI_HARD_TIMEOUT";
       throw timeoutError;
     }
@@ -186,6 +202,10 @@ async function requestAiCompletion({
   temperature,
   responseFormat,
   thinking = "disabled",
+  reasoningEffort = "",
+  tools = null,
+  idleTimeoutMs = AI_PROVIDER_IDLE_TIMEOUT_MS,
+  hardTimeoutMs = AI_PROVIDER_HARD_TIMEOUT_MS,
 }) {
   const settings = await getSettings();
   if (!settings.aiApiKey) {
@@ -205,9 +225,13 @@ async function requestAiCompletion({
   let attempt = await postChatCompletion({
     url,
     apiKey: settings.aiApiKey,
+    idleTimeoutMs,
+    hardTimeoutMs,
     body: buildAiRequestBody(settings, options, {
       includeProviderExtensions: isOfficialDeepSeek,
       thinking,
+      reasoningEffort: isOfficialDeepSeek ? reasoningEffort : "",
+      tools: isOfficialDeepSeek ? tools : null,
     }),
   });
 
@@ -223,6 +247,8 @@ async function requestAiCompletion({
       attempt = await postChatCompletion({
         url,
         apiKey: settings.aiApiKey,
+        idleTimeoutMs,
+        hardTimeoutMs,
         body: buildAiRequestBody(
           settings,
           { ...options, responseFormat: undefined },
@@ -230,13 +256,23 @@ async function requestAiCompletion({
         ),
       });
     } else if (thinking === "enabled") {
+      // DeepSeek's reasoning extensions can be rejected by model aliases or by
+      // a changed endpoint. Retry with plain non-thinking reasoning and without
+      // the optional search tools before surfacing the error.
       attempt = await postChatCompletion({
         url,
         apiKey: settings.aiApiKey,
+        idleTimeoutMs,
+        hardTimeoutMs,
         body: buildAiRequestBody(
           settings,
           { ...options, thinking: "disabled" },
-          { includeProviderExtensions: true, thinking: "disabled" },
+          {
+            includeProviderExtensions: true,
+            thinking: "disabled",
+            reasoningEffort: "",
+            tools: null,
+          },
         ),
       });
     }
@@ -254,14 +290,45 @@ async function requestAiCompletion({
     throw error;
   }
 
-  const text = attempt.data?.choices?.[0]?.message?.content;
+  const choice = attempt.data?.choices?.[0];
+  const text = choice?.message?.content;
   if (typeof text !== "string" || !text.trim()) {
     const error = new Error("AI 服务返回了空响应。");
     error.code = "EMPTY_AI_RESPONSE";
     throw error;
   }
 
-  return { text, settings };
+  return {
+    text,
+    settings,
+    citations: extractAiCitations(choice?.message?.annotations),
+    truncated: choice?.finish_reason === "length",
+  };
+}
+
+/**
+ * Collects the web-tool citations DeepSeek attaches to a chat answer so the
+ * side panel can list the sources. Unknown shapes are ignored rather than
+ * surfaced, because other OpenAI-compatible providers return nothing here.
+ */
+function extractAiCitations(annotations) {
+  if (!Array.isArray(annotations)) return [];
+  const seen = new Set();
+  const citations = [];
+  for (const annotation of annotations) {
+    if (!annotation || annotation.type !== "url_citation") continue;
+    const raw = annotation.url_citation || {};
+    const url = typeof raw.url === "string" ? raw.url.trim() : "";
+    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    const title =
+      typeof raw.title === "string" && raw.title.trim()
+        ? raw.title.trim().slice(0, 200)
+        : url;
+    citations.push({ url, title });
+    if (citations.length >= 12) break;
+  }
+  return citations;
 }
 
 async function readBoundedAiResponse(response, onActivity) {
@@ -1993,7 +2060,17 @@ async function callAiTranslation(
 
 const CHAT_TRANSCRIPT_MAX_CHARS = 100_000;
 const CHAT_HISTORY_MAX_MESSAGES = 24;
-const CHAT_MAX_TOKENS = 4_096;
+// Thinking tokens count towards max_tokens, and the official default for
+// thinking mode is 64K. A small budget used to silently truncate answers, so
+// chat gets generous headroom; it only costs tokens that are actually used.
+const CHAT_MAX_TOKENS = 32_768;
+const CHAT_IDLE_TIMEOUT_MS = 60_000;
+const CHAT_HARD_TIMEOUT_MS = 300_000;
+// Server-side DeepSeek web search: the API performs the searches itself, so the
+// extension only declares the tool. Official endpoint only.
+const CHAT_WEB_SEARCH_TOOLS = Object.freeze([
+  Object.freeze({ type: "deepseek_web_search" }),
+]);
 
 /**
  * Renders the video length as M:SS for the prompt. The side panel normally
@@ -2281,10 +2358,31 @@ async function handleChatAsk({
       history.pop();
     }
 
-    const { text } = await requestAiCompletion({
+    // Chat is the one feature where answer quality matters more than latency:
+    // reasoning is enabled, and the official endpoint may search the web for
+    // facts that the transcript does not contain. Other endpoints get a plain
+    // request because they reject DeepSeek's extension fields.
+    const isOfficialEndpoint =
+      YTD_SETTINGS.isOfficialDeepSeekBase &&
+      YTD_SETTINGS.isOfficialDeepSeekBase(settings.aiBaseUrl)
+        ? true
+        : isOfficialDeepSeekEndpoint(settings.aiBaseUrl);
+    const reasoningEffort = isOfficialEndpoint
+      ? settings.chatReasoningEffort || "high"
+      : "";
+    const tools =
+      isOfficialEndpoint && settings.chatWebSearch !== false
+        ? CHAT_WEB_SEARCH_TOOLS
+        : null;
+
+    const { text, citations, truncated } = await requestAiCompletion({
       maxTokens: CHAT_MAX_TOKENS,
       temperature: 0.6,
       thinking: "enabled",
+      reasoningEffort,
+      tools,
+      idleTimeoutMs: CHAT_IDLE_TIMEOUT_MS,
+      hardTimeoutMs: CHAT_HARD_TIMEOUT_MS,
       messages: [
         { role: "system", content: systemPrompt },
         ...history,
@@ -2296,6 +2394,8 @@ async function handleChatAsk({
       success: true,
       answer: String(text || "").trim(),
       model: settings.aiModel,
+      citations,
+      truncated: !!truncated,
     };
   } catch (error) {
     console.error("Chat error:", error);
@@ -2406,9 +2506,13 @@ globalThis.__YTD_TRANSLATION_TESTING__ = {
   selectTranscriptForChat,
   extractChatQueryTerms,
   formatVideoDurationForChat,
+  extractAiCitations,
   CHAT_TRANSCRIPT_MAX_CHARS,
   CHAT_HISTORY_MAX_MESSAGES,
   CHAT_MAX_TOKENS,
+  CHAT_IDLE_TIMEOUT_MS,
+  CHAT_HARD_TIMEOUT_MS,
+  CHAT_WEB_SEARCH_TOOLS,
   buildAiRequestBody,
   isOfficialDeepSeekEndpoint,
 };

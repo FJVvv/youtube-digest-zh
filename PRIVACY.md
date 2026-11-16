@@ -39,6 +39,8 @@ When you use an AI feature, YouTube Digest sends content to the AI endpoint conf
 - nearby transcript context and video metadata when polishing a saved note; and
 - the transcript context, recent chat messages, and your question when you ask in the chat tab.
 
+When chat runs on the official DeepSeek endpoint, the extension may also let DeepSeek's server-side web search look up public facts that the captions do not cover. Those searches are performed by DeepSeek under its own terms, are billed separately by DeepSeek, and the source links it returns are shown under the answer and saved with that answer. Turning **Let chat search the web** off in Settings stops these searches. The extension never sends your question to any other search provider.
+
 You can edit the endpoint and model in Settings. If you enter an endpoint on another domain, Chrome asks for permission to access that domain once, and the extension keeps using that endpoint until you change it. Requests go directly from the extension to the endpoint you configured with the key you supply. YouTube Digest's developer does not proxy or receive these requests, and the extension does not choose or share additional providers on its own.
 
 Those services process data under their own terms, privacy policies, retention practices, and account settings. Do not send confidential, personal, or regulated content unless their terms and your obligations permit it.
